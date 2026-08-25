@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/openai/plugins",
+  "path": "plugins/zotero",
+  "pinnedVersion": "0.1.2",
+  "pinnedCommit": "installed-cache-0.1.2",
+  "policy": {
+    "autoMerge": "upstream manifest version changed and repository checks pass",
+    "reviewOnly": "source changed without an upstream version bump"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "zotero-modified-private",
+  "interface": {
+    "displayName": "Zotero Modified — Private"
+  },
+  "plugins": [
+    {
+      "name": "zotero-modified",
+      "source": {
+        "source": "local",
+        "path": "./plugins/zotero-modified"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
