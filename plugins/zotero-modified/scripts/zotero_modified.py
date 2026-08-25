@@ -2,9 +2,11 @@
 """Safe Zotero 10 local-library management for Codex.
 
 The Zotero 10 local API supports authenticated writes. This helper adds a
-small, auditable command surface around those writes. Mutating commands are
-preview-only unless ``--yes`` is supplied, and every update carries Zotero's
-current object version to prevent overwriting concurrent edits.
+small command surface around those writes. Use ``status --require-write`` as
+an up-front authorization gate. Mutating commands commit with ``--yes`` and
+retain a no-``--yes`` dry-run for workflows that explicitly request a preview
+or per-step audit. Every update carries Zotero's current object version to
+prevent overwriting concurrent edits.
 """
 
 from __future__ import annotations
@@ -366,10 +368,16 @@ def summarize_collection(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def cmd_status(_: argparse.Namespace) -> None:
+def cmd_status(args: argparse.Namespace) -> None:
     server = server_info()
     server_id = server.get("serverID")
     authorization = cached_authorization(server_id) if server_id else None
+    gate_passed = bool(server.get("writeSupported") and server_id and authorization)
+    blocking_reasons: list[str] = []
+    if not server.get("writeSupported") or not server_id:
+        blocking_reasons.append("Zotero 10 authorized local writes are unavailable")
+    if not authorization:
+        blocking_reasons.append("No cached local write authorization is available")
     server.update(
         {
             "baseURL": DEFAULT_BASE_URL,
@@ -377,9 +385,19 @@ def cmd_status(_: argparse.Namespace) -> None:
             "authorizationRemembered": bool(authorization and authorization.get("remember")),
             "credentialPath": str(credential_path()),
             "modifiedBridge": companion_info(),
+            "authorizationGate": {
+                "required": bool(getattr(args, "require_write", False)),
+                "passed": gate_passed,
+                "blockingReasons": blocking_reasons,
+                "nextStep": None
+                if gate_passed
+                else "Run authorize-write, approve the Zotero prompt, then rerun status --require-write.",
+            },
         }
     )
     dump_json(server)
+    if getattr(args, "require_write", False) and not gate_passed:
+        raise SystemExit(2)
 
 
 def cmd_authorize(_: argparse.Namespace) -> None:
@@ -1199,11 +1217,19 @@ def add_item_selector(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Manage Zotero 10 through its authorized local API. Writes preview by default."
+        description=(
+            "Manage Zotero 10 through its authorized local API. Use status --require-write "
+            "as the workflow gate; omit --yes only for an explicitly requested dry-run."
+        )
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
     status = commands.add_parser("status", help="Show local API and write-authorization status")
+    status.add_argument(
+        "--require-write",
+        action="store_true",
+        help="Exit with status 2 unless the local API supports writes and a cached authorization exists",
+    )
     status.set_defaults(func=cmd_status)
 
     authorize = commands.add_parser(

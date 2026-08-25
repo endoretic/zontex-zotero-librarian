@@ -143,6 +143,8 @@ class ZoteroManagerTests(unittest.TestCase):
 
     def test_parser_exposes_extended_commands(self):
         parser = zm.build_parser()
+        args = parser.parse_args(["status", "--require-write"])
+        self.assertTrue(args.require_write)
         args = parser.parse_args(["set-rating", "--item-key", "ABCD2345", "--value", "5"])
         self.assertEqual(args.value, 5)
         self.assertEqual(args.item_key, ["ABCD2345"])
@@ -182,6 +184,47 @@ class ZoteroManagerTests(unittest.TestCase):
         sent_headers = request.call_args.kwargs["headers"]
         self.assertEqual(sent_headers["Zotero-Server-ID"], "SERVER123")
         self.assertEqual(sent_headers["Zotero-API-Key"], "LOCALKEY")
+
+    @mock.patch.object(zm, "companion_info")
+    @mock.patch.object(zm, "cached_authorization")
+    @mock.patch.object(zm, "server_info")
+    def test_required_status_gate_blocks_without_authorization(
+        self, server_info, cached_authorization, companion_info
+    ):
+        server_info.return_value = {
+            "zoteroVersion": "10.0.1",
+            "serverID": "SERVER123",
+            "writeSupported": True,
+        }
+        cached_authorization.return_value = None
+        companion_info.return_value = {"available": True, "version": "0.1.2"}
+        output = io.StringIO()
+        with self.assertRaises(SystemExit) as raised, contextlib.redirect_stdout(output):
+            zm.cmd_status(argparse.Namespace(require_write=True))
+        self.assertEqual(raised.exception.code, 2)
+        result = json.loads(output.getvalue())
+        self.assertFalse(result["authorizationGate"]["passed"])
+        self.assertIn("authorize-write", result["authorizationGate"]["nextStep"])
+
+    @mock.patch.object(zm, "companion_info")
+    @mock.patch.object(zm, "cached_authorization")
+    @mock.patch.object(zm, "server_info")
+    def test_required_status_gate_passes_with_cached_authorization(
+        self, server_info, cached_authorization, companion_info
+    ):
+        server_info.return_value = {
+            "zoteroVersion": "10.0.1",
+            "serverID": "SERVER123",
+            "writeSupported": True,
+        }
+        cached_authorization.return_value = {"key": "LOCALKEY", "remember": True}
+        companion_info.return_value = {"available": True, "version": "0.1.2"}
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zm.cmd_status(argparse.Namespace(require_write=True))
+        result = json.loads(output.getvalue())
+        self.assertTrue(result["authorizationGate"]["passed"])
+        self.assertIsNone(result["authorizationGate"]["nextStep"])
 
     @mock.patch.object(zm, "resolve_collection")
     def test_rename_defaults_to_preview(self, resolve_collection):
