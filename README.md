@@ -43,7 +43,7 @@ python -m unittest discover -s .\plugins\zotero-modified\tests -v
 2. 将本仓库作为 Codex 的本地 marketplace：
 
 ```powershell
-codex plugin marketplace add "G:\Groceries\Zotero Modified for Codex"
+codex plugin marketplace add "G:\Groceries\zotero-modified-for-codex"
 codex plugin add zotero-modified@zotero-modified-private
 ```
 
@@ -183,7 +183,7 @@ It is not a fork, extension, or companion product of Ethereal Style. “Compatib
 Build locally, install `dist\zotero-modified-bridge-<VERSION>.xpi` through Zotero’s Add-ons Manager, restart Zotero, then run:
 
 ```powershell
-codex plugin marketplace add "G:\Groceries\Zotero Modified for Codex"
+codex plugin marketplace add "G:\Groceries\zotero-modified-for-codex"
 codex plugin add zotero-modified@zotero-modified-private
 ```
 
