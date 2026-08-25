@@ -69,8 +69,8 @@ def plugin_install_guide(version: str, repository: str | None) -> str:
         "For the Codex package, use `@Zotero Modified check for updates` periodically; review "
         "the JSON preview, then explicitly approve the update."
         if repository
-        else "This local build has no GitHub release feed. GitHub Actions adds automatic update "
-        "metadata only to release builds."
+        else "For a local build, Bridge update behavior follows its source manifest. GitHub "
+        "Actions generates the release metadata used by published builds."
     )
     return f"""# Zotero Modified {version}: local installation
 
@@ -82,9 +82,15 @@ extracting it: `.agents/plugins/marketplace.json` refers to `plugins/zotero-modi
 1. Extract this ZIP to a stable local directory.
 2. In Codex, add that extracted directory as a local marketplace, then install
    `zotero-modified` from `zotero-modified-private`.
-3. Install the matching `zotero-modified-bridge-{version}.xpi` through Zotero's Add-ons
-   Manager and restart Zotero. The bridge requires Zotero 10.x.
+3. First use requires one manual Zotero action: install the matching
+   `zotero-modified-bridge-{version}.xpi` through Zotero's Plugins/Add-ons Manager and restart
+   Zotero. Codex must remind you of this step, but cannot silently confirm it for you. The Bridge
+   requires Zotero 10.x.
 4. Start a new Codex task and run `@Zotero Modified status` before requesting writes.
+5. Only after `status` reports `modifiedBridge.available: true`, remove installation artifacts
+   that Codex downloaded or copied: the release ZIP, XPI installer copy, checksum/release-note
+   copies, and scratch extraction/staging directories. Keep this stable marketplace directory,
+   Git checkouts, backups, Zotero profile files, and unrelated user files.
 
 ## Updates
 
@@ -165,6 +171,15 @@ def updates_manifest(repository: str, version: str, addon_manifest: dict, xpi: P
     }
 
 
+def release_addon_manifest(addon_manifest: dict, repository: str | None) -> dict:
+    result = json.loads(json.dumps(addon_manifest))
+    if repository:
+        result["applications"]["zotero"]["update_url"] = github_url(
+            repository, "releases/latest/download/updates.json"
+        )
+    return result
+
+
 def release_notes(version: str, artifacts: list[Path], repository: str | None) -> str:
     checksums = {path.name: sha256(path) for path in artifacts}
     artifact_rows = "\n".join(
@@ -213,9 +228,14 @@ shell-friendly forms.
    `plugins` subfolder: the included `.agents/plugins/marketplace.json` is required.
 3. In Codex, add the extracted folder as a local marketplace and install
    `zotero-modified@zotero-modified-private`.
-4. In Zotero's Add-ons Manager, choose **Install Add-on From File…**, select
-   `zotero-modified-bridge-{version}.xpi`, and restart Zotero.
+4. Complete the required one-time manual step in Zotero's Plugins/Add-ons Manager: choose
+   **Install Add-on From File…**, select `zotero-modified-bridge-{version}.xpi`, and restart
+   Zotero. Codex must remind the user of this step rather than silently bypassing it.
 5. Open a new Codex task and run `@Zotero Modified status` before allowing writes.
+6. After `status` reports `modifiedBridge.available: true`, remove only installer artifacts
+   downloaded or copied for this installation: the release ZIP, XPI installer copy,
+   checksum/release-note copies, and scratch extraction/staging directories. Keep the stable
+   marketplace directory, Git checkouts, backups, Zotero profile files, and unrelated user files.
 
 ## Uninstall
 
@@ -257,14 +277,7 @@ def main() -> int:
         raise SystemExit(f"Missing local marketplace descriptor: {MARKETPLACE}")
     zip_marketplace_bundle(bundle, version, repository)
 
-    addon_for_release = json.loads(json.dumps(addon_manifest))
-    zotero = addon_for_release["applications"]["zotero"]
-    if repository:
-        zotero["update_url"] = github_url(
-            repository, "releases/latest/download/updates.json"
-        )
-    else:
-        zotero.pop("update_url", None)
+    addon_for_release = release_addon_manifest(addon_manifest, repository)
     zip_tree(
         ADDON,
         xpi,

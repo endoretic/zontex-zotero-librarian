@@ -232,11 +232,17 @@ def companion_info() -> dict[str, Any]:
         return {
             "available": True,
             "version": body.get("version") if isinstance(body, dict) else None,
+            "manualInstallRequired": False,
         }
     return {
         "available": False,
         "status": response.status,
         "detail": (response.text or response.error or "unavailable")[:TEXT_LIMIT],
+        "manualInstallRequired": True,
+        "nextStep": (
+            "Install the matching Zotero Modified Bridge XPI manually in Zotero's "
+            "Plugins/Add-ons Manager, restart Zotero, then run status again."
+        ),
     }
 
 
@@ -245,7 +251,9 @@ def require_companion() -> None:
     if not info["available"]:
         exit_with(
             "The Zotero Modified Bridge companion add-on is required for colored statuses "
-            "and CSL installation. Install the released XPI and restart Zotero."
+            "and CSL installation. First use requires a one-time manual installation of the "
+            "matching released XPI in Zotero's Plugins/Add-ons Manager. Restart Zotero, then "
+            "run status again."
         )
 
 

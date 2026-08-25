@@ -36,6 +36,25 @@ def batch_args(**overrides):
 
 
 class ZoteroManagerTests(unittest.TestCase):
+    @mock.patch.object(zm, "request")
+    def test_companion_info_reports_manual_install_handoff(self, request):
+        request.return_value = zm.Response(status=404, headers={}, text="Not Found")
+        info = zm.companion_info()
+        self.assertFalse(info["available"])
+        self.assertTrue(info["manualInstallRequired"])
+        self.assertIn("matching Zotero Modified Bridge XPI", info["nextStep"])
+
+    @mock.patch.object(zm, "request")
+    def test_companion_info_clears_manual_install_handoff_when_available(self, request):
+        request.return_value = zm.Response(
+            status=200,
+            headers={"content-type": "application/json"},
+            text='{"version":"0.1.0"}',
+        )
+        info = zm.companion_info()
+        self.assertTrue(info["available"])
+        self.assertFalse(info["manualInstallRequired"])
+
     def test_parse_assignment_keeps_equals_in_value(self):
         self.assertEqual(zm.parse_assignment("extra=a=b", label="--set"), ("extra", "a=b"))
 
