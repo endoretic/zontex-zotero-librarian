@@ -102,6 +102,14 @@ class ReleaseAutomationTests(unittest.TestCase):
         self.assertIn("modifiedBridge.available: true", guide)
         self.assertIn("Keep this stable marketplace directory", guide)
 
+    def test_bridge_reports_runtime_manifest_version(self) -> None:
+        bootstrap = (ROOT / "companion/zotero-modified-bridge/bootstrap.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("bridgeVersion = data && data.version", bootstrap)
+        self.assertIn("version: bridgeVersion", bootstrap)
+        self.assertNotIn('version: "0.1.0"', bootstrap)
+
     def test_release_updater_rejects_nonstable_versions_and_unsafe_archives(self) -> None:
         self.assertEqual(RELEASE_UPDATER.version_key("1.2.3"), (1, 2, 3))
         with self.assertRaises(RELEASE_UPDATER.UpdateError):
