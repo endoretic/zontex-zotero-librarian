@@ -17,6 +17,12 @@ Use this skill when a user asks to read or modify a personal Zotero library, app
 
 The script stores the local write key in the current Windows user's local application-data directory, not in the repository.
 
+## First-install handoff and cleanup
+
+- `status` is also the first-install check. If `modifiedBridge.manualInstallRequired` is true, explicitly tell the user that Zotero requires a one-time manual action: open Zotero's Plugins/Add-ons Manager, choose **Install Add-on From File**, select the matching release XPI, restart Zotero, then start a new Codex task and run `status` again. Do not claim that Codex can silently install the XPI or bypass Zotero's confirmation UI.
+- The Bridge is optional for basic collection/item CRUD but required for native colored tags/statuses and CSL installation. State this distinction when the Bridge is absent.
+- After `status` confirms `modifiedBridge.available: true`, clean up installer artifacts that Codex created or downloaded for this first installation: the release ZIP, a downloaded or copied XPI installer, copied checksum/release-note files, and scratch extraction or staging directories. Keep the stable marketplace directory, Git checkouts, backups, Zotero profile files, and all unrelated user files. Never delete a pre-existing user-supplied installer without explicit approval, and report every path removed.
+
 ## Data conventions
 
 - A style-compatible status is a native colored Zotero tag whose name starts with `/`. An item should have at most one such status; `set-status` removes its previous slash-prefixed status first.

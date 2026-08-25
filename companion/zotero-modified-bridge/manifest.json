@@ -3,15 +3,18 @@
   "name": "Zotero Modified Bridge",
   "version": "0.1.0",
   "description": "Support component for Zotero Modified.",
+  "homepage_url": "https://github.com/endoretic/zotero-modified-for-codex",
+  "author": "EndoReticulum",
   "icons": {
     "48": "icon.png",
     "96": "icon.png"
   },
   "applications": {
     "zotero": {
-      "id": "zotero-modified-bridge@local",
+      "id": "zotero-modified-bridge@endoretic.github.io",
+      "update_url": "https://github.com/endoretic/zotero-modified-for-codex/releases/latest/download/updates.json",
       "strict_min_version": "10.0",
-      "strict_max_version": "10.*"
+      "strict_max_version": "10.0.*"
     }
   }
 }

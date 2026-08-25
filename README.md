@@ -39,15 +39,15 @@ python .\scripts\build_release.py --clean
 python -m unittest discover -s .\plugins\zotero-modified\tests -v
 ```
 
-1. 在 Zotero 的“附加组件管理器”安装 `dist\zotero-modified-bridge-<VERSION>.xpi`，然后重启 Zotero。该 XPI 仅补足彩色标签与 CSL 管理；基础 CRUD 不依赖它。
-2. 将本仓库作为 Codex 的本地 marketplace：
+1. 将本仓库作为 Codex 的本地 marketplace：
 
 ```powershell
 codex plugin marketplace add "G:\Groceries\zotero-modified-for-codex"
 codex plugin add zotero-modified@zotero-modified-private
 ```
 
-3. 新建 Codex 任务，并先运行 `status`。首次写入时，在 Zotero 的授权弹窗中选择 **Always Allow**。
+2. 新建 Codex 任务并运行 `@Zotero Modified status`。首次使用若 Bridge 尚未安装，Codex 会提醒你在 Zotero 的“插件/附加组件管理器”中手动安装匹配的 `dist\zotero-modified-bridge-<VERSION>.xpi`；该确认不能静默代办。重启 Zotero 后新建任务并再次运行 `status`。
+3. Bridge 仅补足彩色标签、状态与 CSL 管理；基础 CRUD 不依赖它。首次写入时，在 Zotero 的授权弹窗中选择 **Always Allow**。
 
 ### 从 GitHub Release 安装、升级与卸载
 
@@ -57,23 +57,18 @@ ZIP 与 XPI 必须使用完全相同的版本；Bridge 兼容 Zotero 10.0--10.x�
 
 首次安装时，将 ZIP 解压到一个稳定位置（不要只移动其中的 `plugins` 文件夹），将该目录作为
 Codex 本地 marketplace 添加，再在 Zotero 的“附加组件管理器”中安装同版本 XPI 并重启 Zotero。
+这一步需要用户在 Zotero 中手动确认。`status` 确认 Bridge 可用后，Codex 应清理本次安装由它下载或
+复制的 ZIP、XPI 安装副本、校验/说明文件和临时解压目录，但必须保留稳定安装目录、Git checkout、
+备份、Zotero 配置和其它用户文件。
 
 可直接把下面的提示词交给 Codex；将路径和版本替换为实际值：
 
 ```text
-我已下载 Zotero Modified v<VERSION> 的 GitHub Release，并将
-zotero-modified-<VERSION>.zip 解压到 <EXTRACTED_BUNDLE_DIR>；匹配的
-zotero-modified-bridge-<VERSION>.xpi 位于 <XPI_PATH>，并将 Release 中的
-RELEASE_NOTES.md 保存为 <RELEASE_NOTES_PATH>。
-
-请先读取 <RELEASE_NOTES_PATH> 与 <EXTRACTED_BUNDLE_DIR>\INSTALL.md，并核对
-Release 中的 SHA256SUMS.txt / checksums.json。确认 ZIP 与 XPI 版本一致、Zotero 为 10.x 后：
-1. 将 <EXTRACTED_BUNDLE_DIR> 添加为 Codex 本地 marketplace；
-2. 安装 Zotero Modified；
-3. 指导我在 Zotero 的“附加组件管理器”从 <XPI_PATH> 安装 Zotero Modified Bridge，并提醒我重启 Zotero；
-4. 重启后创建新任务，运行 @Zotero Modified status，报告本地 API、Bridge 和写入授权状态。
-
-不要绕过 Zotero 的授权弹窗；任何写入前先展示 preview 并等待我的确认。
+请安装 <DOWNLOAD_DIR> 中的 Zotero Modified v<VERSION>：核对 checksums.json，将 ZIP 解压到稳定的
+<INSTALL_DIR>，添加为 Codex 本地 marketplace 并安装插件。首次使用时提醒我在 Zotero 中手动安装
+同版本 XPI、重启并再次运行 @Zotero Modified status；不要绕过我的确认。状态通过后，只清理本次安装
+由你创建或下载的 ZIP、XPI 副本、校验/说明文件和临时目录，保留 <INSTALL_DIR>、Git checkout、备份及
+其它用户文件，并报告清理路径。所有 Zotero 写入先 preview。
 ```
 
 ### 安装后的更新
@@ -180,14 +175,18 @@ It is not a fork, extension, or companion product of Ethereal Style. “Compatib
 
 ### Install
 
-Build locally, install `dist\zotero-modified-bridge-<VERSION>.xpi` through Zotero’s Add-ons Manager, restart Zotero, then run:
+Build locally, then add this repository as a Codex local marketplace:
 
 ```powershell
 codex plugin marketplace add "G:\Groceries\zotero-modified-for-codex"
 codex plugin add zotero-modified@zotero-modified-private
 ```
 
-Start a new Codex task after installation. The XPI is only needed for colored tags/statuses and CSL operations; the standard Zotero 10 local API handles basic CRUD.
+Start a new Codex task and run `@Zotero Modified status`. On first use, Codex must remind you to
+manually install the matching `dist\zotero-modified-bridge-<VERSION>.xpi` through Zotero’s
+Plugins/Add-ons Manager; it cannot silently confirm that step. Restart Zotero, start another task,
+and run `status` again. The XPI is only needed for colored tags/statuses and CSL operations; the
+standard Zotero 10 local API handles basic CRUD.
 
 ### GitHub Release install, upgrade, and removal
 
@@ -199,27 +198,22 @@ matching companion (`zotero-modified-bridge-*.xpi`), `SHA256SUMS.txt`, `checksum
 For a first installation, extract the ZIP to a stable folder without moving its `plugins` folder
 away from `.agents/plugins/marketplace.json`. Add the extracted folder as a Codex local marketplace,
 then install the matching XPI in Zotero’s Add-ons Manager and restart Zotero.
+The XPI step requires manual user confirmation. After `status` confirms that the Bridge is
+available, Codex should remove only the ZIP, XPI installer copy, checksum/release-note copies, and
+temporary extraction directories it created or downloaded for this installation. It must keep the
+stable install folder, Git checkouts, backups, Zotero profile data, and unrelated user files.
 
 The following prompt can be given directly to Codex. Replace the placeholders with real paths and
 the release version:
 
 ```text
-I downloaded Zotero Modified v<VERSION> from GitHub Releases, extracted
-zotero-modified-<VERSION>.zip to <EXTRACTED_BUNDLE_DIR>, and saved the matching
-zotero-modified-bridge-<VERSION>.xpi at <XPI_PATH>. I also saved the release's
-RELEASE_NOTES.md at <RELEASE_NOTES_PATH>.
-
-First read <RELEASE_NOTES_PATH> and <EXTRACTED_BUNDLE_DIR>\INSTALL.md, then verify the release's
-SHA256SUMS.txt / checksums.json. After confirming that both artifacts have the same version and Zotero is 10.x:
-1. add <EXTRACTED_BUNDLE_DIR> as a Codex local marketplace;
-2. install Zotero Modified;
-3. guide me to install Zotero Modified Bridge from <XPI_PATH> in Zotero’s Add-ons Manager and
-   remind me to restart Zotero;
-4. after restart, open a new task, run @Zotero Modified status, and report the local API, Bridge,
-   and write-authorisation status.
-
-Do not bypass Zotero’s authorisation dialog. Before every write, show a preview and wait for my
-confirmation.
+Install Zotero Modified v<VERSION> from <DOWNLOAD_DIR>: verify checksums.json, extract the ZIP to the
+stable <INSTALL_DIR>, add it as a Codex local marketplace, and install the plugin. On first use,
+remind me to install the same-version XPI manually in Zotero, restart, and run @Zotero Modified
+status again; do not bypass my confirmation. After status succeeds, remove only the ZIP, XPI copy,
+checksum/release-note files, and temporary directories you created or downloaded for this install.
+Keep <INSTALL_DIR>, Git checkouts, backups, and all other user files, and report removed paths.
+Preview every Zotero write first.
 ```
 
 ### Post-install updates

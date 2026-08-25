@@ -80,6 +80,28 @@ class ReleaseAutomationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             BUILD_RELEASE.normalize_repository("example/not a repository")
 
+    def test_local_build_preserves_bridge_update_url(self) -> None:
+        manifest = {
+            "applications": {
+                "zotero": {
+                    "id": "bridge@example.test",
+                    "update_url": "https://example.test/updates.json",
+                }
+            }
+        }
+        built = BUILD_RELEASE.release_addon_manifest(manifest, None)
+        self.assertEqual(
+            built["applications"]["zotero"]["update_url"],
+            "https://example.test/updates.json",
+        )
+        self.assertIsNot(built, manifest)
+
+    def test_install_guide_requires_manual_xpi_handoff_and_cleanup(self) -> None:
+        guide = BUILD_RELEASE.plugin_install_guide("0.1.0", "example/project")
+        self.assertIn("one manual Zotero action", guide)
+        self.assertIn("modifiedBridge.available: true", guide)
+        self.assertIn("Keep this stable marketplace directory", guide)
+
     def test_release_updater_rejects_nonstable_versions_and_unsafe_archives(self) -> None:
         self.assertEqual(RELEASE_UPDATER.version_key("1.2.3"), (1, 2, 3))
         with self.assertRaises(RELEASE_UPDATER.UpdateError):
