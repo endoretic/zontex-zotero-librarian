@@ -8,6 +8,7 @@ on:
       - "plugins/zotero-modified/skills/**"
       - "companion/zotero-modified-bridge/bootstrap.js"
       - "scripts/build_release.py"
+      - "scripts/release_policy.py"
   workflow_dispatch:
     inputs:
       force_patch:
