@@ -1,6 +1,7 @@
 const STATUS_ROUTE = "/api/users/:userID/zotero-modified/statuses";
 const STYLES_ROUTE = "/api/users/:userID/zotero-modified/styles";
 const ROUTES = [STATUS_ROUTE, STYLES_ROUTE];
+let bridgeVersion = "unknown";
 
 function jsonResponse(status, value) {
   return [status, "application/json", JSON.stringify(value, null, 2)];
@@ -37,7 +38,7 @@ function statusEndpointClass() {
         let all = coloredTags(libraryID);
         return jsonResponse(200, {
           bridge: "zotero-modified-bridge",
-          version: "0.1.0",
+          version: bridgeVersion,
           coloredTags: all,
           statuses: all.filter((entry) => entry.name.startsWith("/")),
         });
@@ -141,15 +142,17 @@ function stylesEndpointClass() {
   };
 }
 
-async function startup() {
+async function startup(data) {
+  bridgeVersion = data && data.version ? String(data.version) : "unknown";
   await Zotero.initializationPromise;
   Zotero.Server.Endpoints[STATUS_ROUTE] = statusEndpointClass();
   Zotero.Server.Endpoints[STYLES_ROUTE] = stylesEndpointClass();
-  Zotero.debug("Zotero Modified Bridge 0.1.0 started");
+  Zotero.debug(`Zotero Modified Bridge ${bridgeVersion} started`);
 }
 
 function shutdown() {
   for (let route of ROUTES) delete Zotero.Server.Endpoints[route];
+  bridgeVersion = "unknown";
 }
 
 function install() {}
