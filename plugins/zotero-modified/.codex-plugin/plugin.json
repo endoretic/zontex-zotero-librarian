@@ -1,6 +1,6 @@
 {
   "name": "zotero-modified",
-  "version": "0.1.2",
+  "version": "0.1.2+codex.20260825124127",
   "description": "Unofficial Zotero 10 workflow tools: safe local curation, ethereal style metadata supported, and customized citation format.",
   "author": {
     "name": "EndoReticulum"
@@ -17,7 +17,7 @@
   "interface": {
     "displayName": "Zotero Modified",
     "shortDescription": "Zotero curation, status/rating conventions, and CSL tools",
-    "longDescription": "An unofficial extension of the upstream OpenAI Zotero workflow, compatible with Ethereal Style metadata, with enhanced features. It adds preview-first collection and item CRUD, collection snapshots, structured batch metadata updates, native colored tags, slash-prefixed status and rate conventions compatible with common Zotero table setups, and local CSL installation.",
+    "longDescription": "An unofficial extension of the upstream OpenAI Zotero workflow, compatible with Ethereal Style metadata. It adds an up-front local-API authorization gate, one-confirmation multi-item curation, structured metadata updates, native colored tags, slash-prefixed statuses, Extra ratings, deduplication, and local CSL installation. Dry-run previews and snapshots are produced only when requested.",
     "developerName": "EndoReticulum",
     "category": "Education & Research",
     "capabilities": [
@@ -30,7 +30,7 @@
     "brandColor": "#A855F7",
     "defaultPrompt": [
       "create and curate a collection with a preview before every write",
-      "modify item metadata in the collection using ethereal style format",
+      "write statuses, ratings, roles, and controlled topical metadata following Ethereal Style conventions",
       "write and install a CSL template for Zotero Word integration"
     ]
   }
