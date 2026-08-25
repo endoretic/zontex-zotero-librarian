@@ -261,11 +261,16 @@ def main() -> int:
 
     plugin_manifest = read_json(PLUGIN / ".codex-plugin" / "plugin.json")
     addon_manifest = read_json(ADDON / "manifest.json")
-    if plugin_manifest.get("version") != addon_manifest.get("version"):
-        raise SystemExit("Plugin and companion versions must match")
+    plugin_version = str(plugin_manifest.get("version", ""))
+    companion_version = str(addon_manifest.get("version", ""))
+    if plugin_version != companion_version:
+        raise SystemExit(
+            "Plugin and companion versions must match: "
+            f"plugin={plugin_version!r}, companion={companion_version!r}"
+        )
     if not RELEASE_SOURCE.is_file():
         raise SystemExit(f"Missing release source descriptor: {RELEASE_SOURCE}")
-    version = str(plugin_manifest["version"])
+    version = plugin_version
 
     if args.clean and DIST.exists():
         shutil.rmtree(DIST)

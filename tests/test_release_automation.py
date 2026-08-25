@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import sys
 import unittest
 import zipfile
@@ -31,6 +32,20 @@ RELEASE_UPDATER = load_module(
 
 
 class ReleaseAutomationTests(unittest.TestCase):
+    def test_plugin_and_companion_manifests_share_stable_version(self) -> None:
+        plugin = json.loads(
+            (ROOT / "plugins/zotero-modified/.codex-plugin/plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        companion = json.loads(
+            (ROOT / "companion/zotero-modified-bridge/manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(plugin["version"], companion["version"])
+        self.assertRegex(plugin["version"], r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+
     def test_functional_paths_request_a_patch_release(self) -> None:
         policy = RELEASE_POLICY.classify(
             [
