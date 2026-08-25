@@ -6,6 +6,7 @@ import sys
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +58,13 @@ class ReleaseAutomationTests(unittest.TestCase):
             ]
         )
         self.assertEqual(policy.release_kind, "none")
+
+    def test_initial_push_uses_git_diff_tree_root(self) -> None:
+        completed = Mock(stdout="plugins/zotero-modified/scripts/update_release.py\n")
+        with patch.object(RELEASE_POLICY.subprocess, "run", return_value=completed) as run:
+            changed = RELEASE_POLICY.git_changed_files(RELEASE_POLICY.ZERO_SHA, "HEAD", False)
+        self.assertEqual(changed, ["plugins/zotero-modified/scripts/update_release.py"])
+        self.assertIn("--root", run.call_args.args[0])
 
     def test_patch_versions_are_incremented_without_changing_major_or_minor(self) -> None:
         self.assertEqual(BUMP_VERSION.next_patch("0.1.0"), "0.1.1")

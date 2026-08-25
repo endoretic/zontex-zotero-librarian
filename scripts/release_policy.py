@@ -16,6 +16,7 @@ FUNCTIONAL_PREFIXES = (
 FUNCTIONAL_FILES = {
     "companion/zotero-modified-bridge/bootstrap.js",
     "scripts/build_release.py",
+    "scripts/release_policy.py",
 }
 ZERO_SHA = "0" * 40
 
@@ -50,7 +51,15 @@ def git_changed_files(base: str | None, head: str, working_tree: bool) -> list[s
     if working_tree:
         command = ["git", "diff", "--name-only"]
     elif not base or base == ZERO_SHA:
-        command = ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", head]
+        command = [
+            "git",
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            head,
+        ]
     else:
         command = ["git", "diff", "--name-only", base, head]
     result = subprocess.run(command, check=True, capture_output=True, text=True)
