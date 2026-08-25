@@ -1,6 +1,6 @@
 {
   "name": "zotero-modified",
-  "version": "0.1.2+codex.20260825124127",
+  "version": "0.1.2",
   "description": "Unofficial Zotero 10 workflow tools: safe local curation, ethereal style metadata supported, and customized citation format.",
   "author": {
     "name": "EndoReticulum"
