@@ -240,6 +240,12 @@ class ZoteroManagerTests(unittest.TestCase):
         api_get.side_effect = [
             {"data": {"key": "ABCD2345", "version": 8, "itemType": "book", "title": "Master"}},
             {"data": {"key": "EFGH6789", "version": 3, "itemType": "book", "title": "Other"}},
+            [
+                {"data": {"key": "PDF12345", "itemType": "attachment"}},
+                {"data": {"key": "NOTE1234", "itemType": "note"}},
+            ],
+            [{"data": {"key": "ANN12345", "itemType": "annotation"}}],
+            [],
         ]
         args = argparse.Namespace(
             master="ABCD2345",
@@ -253,6 +259,9 @@ class ZoteroManagerTests(unittest.TestCase):
         preview = json.loads(output.getvalue())
         self.assertFalse(preview["committed"])
         self.assertEqual(preview["master"]["key"], "ABCD2345")
+        self.assertEqual(preview["master"]["attachmentCount"], 1)
+        self.assertEqual(preview["master"]["noteCount"], 1)
+        self.assertEqual(preview["master"]["annotationCount"], 1)
         self.assertEqual(preview["others"][0]["title"], "Other")
 
     @mock.patch.object(zm, "bridge_post")
@@ -261,6 +270,8 @@ class ZoteroManagerTests(unittest.TestCase):
         api_get.side_effect = [
             {"data": {"key": "ABCD2345", "version": 8, "itemType": "book", "title": "Master"}},
             {"data": {"key": "EFGH6789", "version": 3, "itemType": "book", "title": "Other"}},
+            [],
+            [],
         ]
         bridge_post.return_value = {"merged": True}
         args = argparse.Namespace(

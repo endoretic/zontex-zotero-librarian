@@ -189,4 +189,88 @@ test("navigate opens an annotation at its parent attachment", async () => {
   assert.deepEqual(JSON.parse(JSON.stringify(opened)), [20, { annotationID: "ANN00001" }]);
 });
 
+test("native merge requires an exact version map", () => {
+  const { api } = loadBridge();
+  assert.equal(api.exactVersionMap({ MASTER01: 2, OTHER001: 4 }, ["MASTER01", "OTHER001"]), true);
+  assert.equal(api.exactVersionMap({ MASTER01: 2 }, ["MASTER01", "OTHER001"]), false);
+  assert.equal(api.exactVersionMap({ MASTER01: 2, OTHER001: 4, EXTRA001: 1 }, ["MASTER01", "OTHER001"]), false);
+});
+
+test("native merge commits through Zotero's module and verifies readback", async () => {
+  const master = makeItem("MASTER01", { version: 2 });
+  const other = makeItem("OTHER001", { version: 4 });
+  const { api } = loadBridge({
+    items: new Map([[master.key, master], [other.key, other]]),
+    ChromeUtils: {
+      importESModule: () => ({
+        mergeItems: async (target, others) => {
+          assert.equal(target, master);
+          assert.equal(others.length, 1);
+          assert.equal(others[0], other);
+          target.version++;
+          others.forEach((item) => { item.deleted = true; });
+        },
+      }),
+    },
+  });
+  const result = await endpoint(api.itemMergeEndpointClass(), {
+    master: master.key,
+    others: [other.key],
+    expectedVersions: { MASTER01: 2, OTHER001: 4 },
+  });
+  assert.equal(result[0], 200);
+  assert.deepEqual(responseBody(result), {
+    merged: true,
+    master: { key: "MASTER01", version: 3 },
+    trashed: ["OTHER001"],
+  });
+});
+
+test("native merge rejects stale versions before loading the module", async () => {
+  const master = makeItem("MASTER01", { version: 3 });
+  const other = makeItem("OTHER001", { version: 4 });
+  let loaded = false;
+  const { api } = loadBridge({
+    items: new Map([[master.key, master], [other.key, other]]),
+    ChromeUtils: { importESModule: () => { loaded = true; return {}; } },
+  });
+  const result = await endpoint(api.itemMergeEndpointClass(), {
+    master: master.key,
+    others: [other.key],
+    expectedVersions: { MASTER01: 2, OTHER001: 4 },
+  });
+  assert.equal(result[0], 412);
+  assert.equal(responseBody(result).error, "item-version-changed");
+  assert.equal(loaded, false);
+});
+
+test("native merge rejects an individually read-only item", async () => {
+  const master = makeItem("MASTER01", { version: 2 });
+  const other = makeItem("OTHER001", { version: 4, isEditable: () => false });
+  const { api } = loadBridge({ items: new Map([[master.key, master], [other.key, other]]) });
+  const result = await endpoint(api.itemMergeEndpointClass(), {
+    master: master.key,
+    others: [other.key],
+    expectedVersions: { MASTER01: 2, OTHER001: 4 },
+  });
+  assert.equal(result[0], 423);
+  assert.equal(responseBody(result).error, "item-read-only");
+});
+
+test("native merge reports a failed trash readback", async () => {
+  const master = makeItem("MASTER01", { version: 2 });
+  const other = makeItem("OTHER001", { version: 4 });
+  const { api } = loadBridge({
+    items: new Map([[master.key, master], [other.key, other]]),
+    ChromeUtils: { importESModule: () => ({ mergeItems: async () => {} }) },
+  });
+  const result = await endpoint(api.itemMergeEndpointClass(), {
+    master: master.key,
+    others: [other.key],
+    expectedVersions: { MASTER01: 2, OTHER001: 4 },
+  });
+  assert.equal(result[0], 500);
+  assert.equal(responseBody(result).error, "merge-readback-failed");
+});
+
 module.exports = { endpoint, loadBridge, makeItem, responseBody };
