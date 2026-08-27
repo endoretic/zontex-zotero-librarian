@@ -49,11 +49,16 @@ class ZoteroManagerTests(unittest.TestCase):
         request.return_value = zm.Response(
             status=200,
             headers={"content-type": "application/json"},
-            text='{"version":"0.1.0"}',
+            text=(
+                '{"version":"0.1.0","compatibility":'
+                '{"experimental":true,"warnings":["review Zotero update"]}}'
+            ),
         )
         info = zm.companion_info()
         self.assertTrue(info["available"])
         self.assertFalse(info["manualInstallRequired"])
+        self.assertTrue(info["compatibility"]["experimental"])
+        self.assertEqual(info["compatibility"]["warnings"], ["review Zotero update"])
 
     def test_parse_assignment_keeps_equals_in_value(self):
         self.assertEqual(zm.parse_assignment("extra=a=b", label="--set"), ("extra", "a=b"))
@@ -163,6 +168,32 @@ class ZoteroManagerTests(unittest.TestCase):
         self.assertEqual(args.mode, "citation")
         args = parser.parse_args(["navigate", "--open-attachment", "PDF12345"])
         self.assertEqual(args.open_attachment, "PDF12345")
+        args = parser.parse_args(["document-segments", "--limit", "25"])
+        self.assertEqual(args.limit, 25)
+        args = parser.parse_args([
+            "create-annotation",
+            "--attachment-key",
+            "PDF12345",
+            "--source-hash",
+            "HASH",
+            "--segment-id",
+            "block:1",
+            "--start",
+            "0",
+            "--end",
+            "4",
+            "--tag",
+            "Method",
+        ])
+        self.assertEqual(args.tag, ["Method"])
+        args = parser.parse_args([
+            "annotations-to-note",
+            "--parent-item-key",
+            "PAPER123",
+            "--annotation-key",
+            "ANN12345",
+        ])
+        self.assertEqual(args.order, "document")
 
     @mock.patch.object(zm, "api_get")
     @mock.patch.object(zm, "require_companion")
@@ -213,6 +244,51 @@ class ZoteroManagerTests(unittest.TestCase):
             zm.MODIFIED_NAVIGATE_PATH,
             {"action": "open-attachment", "itemKey": "PDF12345"},
             "POST Bridge navigate (open-attachment)",
+        )
+
+    def test_create_annotation_defaults_to_preview(self):
+        args = argparse.Namespace(
+            attachment_key="PDF12345",
+            source_hash="HASH",
+            segment_id="block:1",
+            start=0,
+            end=4,
+            type="highlight",
+            color="#ffd400",
+            comment=None,
+            tag=["Method"],
+            yes=False,
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zm.cmd_create_annotation(args)
+        preview = json.loads(output.getvalue())
+        self.assertFalse(preview["committed"])
+        self.assertEqual(preview["request"]["target"]["segmentId"], "block:1")
+
+    @mock.patch.object(zm, "bridge_post")
+    def test_annotations_to_note_uses_native_route(self, bridge_post):
+        bridge_post.return_value = {"created": True}
+        args = argparse.Namespace(
+            parent_item_key="PAPER123",
+            annotation_key=["ANN12345", "ANN67890"],
+            order="provided",
+            no_comments=False,
+            no_header=True,
+            yes=True,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            zm.cmd_annotations_to_note(args)
+        bridge_post.assert_called_once_with(
+            zm.MODIFIED_ANNOTATION_NOTE_PATH,
+            {
+                "annotationKeys": ["ANN12345", "ANN67890"],
+                "parentItemKey": "PAPER123",
+                "order": "provided",
+                "noComments": False,
+                "noHeader": True,
+            },
+            "POST Bridge annotation note",
         )
 
     def test_invalid_field_is_rejected_before_write(self):
