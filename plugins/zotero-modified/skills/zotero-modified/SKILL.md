@@ -44,6 +44,7 @@ The colored-tag/status, CSL, and active-annotation commands require the separate
 - `render` is a read-only native Zotero CSL preview. Use it after `install-csl` when iterating on citation or bibliography output.
 - `navigate` is a non-persistent UI side effect for revealing an item or opening an attachment/annotation. It must use explicit keys and does not claim visual readback beyond the requested target.
 - `rename-tag` and `merge-tags` are library-wide, high-impact writes. Present one consolidated summary of source/target names, expected affected-item counts, and native colors; run with `--yes` only after that explicit confirmation. The Bridge rechecks every count immediately before mutation and preserves the target color.
+- `merge-items` is a high-impact native merge. Present one consolidated preview with the explicit master, other items, titles, item types, and exact object versions; run with `--yes` only after confirmation. Only top-level regular items are accepted, and the Bridge verifies every version immediately before calling Zotero's native merge module.
 - The Bridge remains a thin privileged layer: ordinary item/collection/tag/note CRUD stays on the stock Local API, and no generic execution endpoint or Reader UI hook is allowed.
 - `document-segments` reads active PDF SDT leaf blocks as lossless, exact-offset segments. Use `segmentId` with a `[start,end)` range; never retry a stale locator after `412 document-changed`.
 - `create-annotation` is limited to active PDF Reader + native SDT + highlight/underline. Use it directly for one or two explicitly requested annotations; autonomous batches require one consolidated confirmation first.
@@ -88,6 +89,7 @@ python scripts/zotero_modified.py set-rating --item-key ABCD2345 --value 5 --yes
 python scripts/zotero_modified.py colored-tags
 python scripts/zotero_modified.py rename-tag --from "Old tag" --to "New tag" --expect-count 12
 python scripts/zotero_modified.py merge-tags --source "Old tag=12" --source "Legacy=3" --into "New tag"
+python scripts/zotero_modified.py merge-items --master ABCD2345 --other EFGH6789 --expected-version ABCD2345=8 --expected-version EFGH6789=3
 python scripts/zotero_modified.py install-csl --file .\my-style.csl
 python scripts/zotero_modified.py context
 python scripts/zotero_modified.py document-segments --attachment-key ABCD2345

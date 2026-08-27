@@ -3,6 +3,7 @@ const STYLES_ROUTE = "/api/users/:userID/zotero-modified/styles";
 const CONTEXT_ROUTE = "/api/users/:userID/zotero-modified/context";
 const RENDER_ROUTE = "/api/users/:userID/zotero-modified/render";
 const NAVIGATE_ROUTE = "/api/users/:userID/zotero-modified/navigate";
+const ITEM_MERGE_ROUTE = "/api/users/:userID/zotero-modified/items/merge";
 const DOCUMENT_SEGMENTS_ROUTE = "/api/users/:userID/zotero-modified/document-segments";
 const ANNOTATIONS_ROUTE = "/api/users/:userID/zotero-modified/annotations";
 const ANNOTATION_NOTE_ROUTE = "/api/users/:userID/zotero-modified/annotations/note";
@@ -21,6 +22,7 @@ const ROUTES = [
   ANNOTATION_NOTE_ROUTE,
   TAG_RENAME_ROUTE,
   TAG_MERGE_ROUTE,
+  ITEM_MERGE_ROUTE,
 ];
 let bridgeVersion = "unknown";
 const reportedCompatibilityWarnings = new Set();
@@ -1195,6 +1197,153 @@ function annotationNoteEndpointClass() {
   };
 }
 
+function nativeMergeItems() {
+  if (typeof ChromeUtils === "undefined" || typeof ChromeUtils.importESModule !== "function") return null;
+  try {
+    const module = ChromeUtils.importESModule("chrome://zotero/content/mergeItems.mjs");
+    return typeof module?.mergeItems === "function" ? module.mergeItems : null;
+  }
+  catch (error) {
+    Zotero.logError(error);
+    return null;
+  }
+}
+
+function itemMergeKey(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function exactVersionMap(value, keys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const actualKeys = Object.keys(value).sort();
+  const expectedKeys = [...keys].sort();
+  return actualKeys.length === expectedKeys.length
+    && actualKeys.every((key, index) => key === expectedKeys[index])
+    && keys.every((key) => Number.isInteger(value[key]) && value[key] >= 0);
+}
+
+function mergeableItem(item) {
+  return !!item && !item.deleted
+    && typeof item.isTopLevelItem === "function" && item.isTopLevelItem()
+    && typeof item.isRegularItem === "function" && item.isRegularItem();
+}
+
+function itemMergeSnapshot(items) {
+  const collect = (method) => [...new Set(items.flatMap((item) => (
+    typeof item[method] === "function" ? item[method]() : []
+  )))];
+  return {
+    collectionIDs: collect("getCollections"),
+    attachmentIDs: collect("getAttachments"),
+    noteIDs: collect("getNotes"),
+  };
+}
+
+function missingMergeValues(actual, expected) {
+  const values = new Set(actual);
+  return expected.filter((value) => !values.has(value));
+}
+
+function itemMergeEndpointClass() {
+  return class ModifiedItemMerge extends Zotero.Server.LocalAPI.Settings {
+    supportedMethods = ["POST"];
+
+    async run(requestData) {
+      try {
+        const body = parseBody(this, requestData);
+        const masterKey = itemMergeKey(body.master);
+        const otherKeys = Array.isArray(body.others)
+          ? body.others.map(itemMergeKey)
+          : null;
+        if (!masterKey || !otherKeys || otherKeys.length < 1 || otherKeys.length > 20
+          || otherKeys.some((key) => !key)) {
+          return errorResponse(400, "invalid-merge-items", "masterKey and 1–20 otherKeys are required");
+        }
+        const keys = [masterKey, ...otherKeys];
+        if (new Set(keys).size !== keys.length) {
+          return errorResponse(400, "duplicate-item-keys", "masterKey and otherKeys must be unique");
+        }
+        if (!exactVersionMap(body.expectedVersions, keys)) {
+          return errorResponse(400, "invalid-expected-versions", "expectedVersions must exactly cover all item keys");
+        }
+        const library = Zotero.Libraries.get(requestData.libraryID);
+        if (!library || library.editable === false) {
+          return errorResponse(423, "library-read-only", "The Zotero library is not editable.");
+        }
+
+        const items = [];
+        for (const key of keys) {
+          const item = await itemByKey(requestData.libraryID, key);
+          if (!item) return errorResponse(404, "item-not-found", `Item '${key}' was not found.`);
+          if (!mergeableItem(item)) {
+            return errorResponse(422, "item-not-mergeable", `Item '${key}' must be a top-level regular item.`);
+          }
+          if (typeof item.isEditable === "function" && !item.isEditable()) {
+            return errorResponse(423, "item-read-only", `Item '${key}' is not editable.`);
+          }
+          if (Number(item.clientVersion) !== body.expectedVersions[key]) {
+            return errorResponse(
+              412,
+              "item-version-changed",
+              `Item '${key}' changed since the preview.`,
+              true,
+              { key, expectedVersion: body.expectedVersions[key], actualVersion: item.clientVersion }
+            );
+          }
+          items.push(item);
+        }
+
+        const beforeMerge = itemMergeSnapshot(items);
+        const mergeItems = nativeMergeItems();
+        if (!mergeItems) {
+          return errorResponse(501, "capability-unavailable", "Zotero's native item merge module is unavailable.", true);
+        }
+        await mergeItems(items[0], items.slice(1));
+
+        const master = await itemByKey(requestData.libraryID, masterKey);
+        if (!master || master.deleted) {
+          return errorResponse(500, "merge-readback-failed", "The merged master item could not be read back.", true);
+        }
+        const afterMerge = itemMergeSnapshot([master]);
+        const missingCollections = missingMergeValues(afterMerge.collectionIDs, beforeMerge.collectionIDs);
+        const missingAttachments = missingMergeValues(afterMerge.attachmentIDs, beforeMerge.attachmentIDs);
+        const missingNotes = missingMergeValues(afterMerge.noteIDs, beforeMerge.noteIDs);
+        if (missingCollections.length || missingAttachments.length || missingNotes.length) {
+          return errorResponse(
+            500,
+            "merge-readback-failed",
+            "The merged master item did not retain every collection or child item.",
+            true,
+            { missingCollections, missingAttachments, missingNotes }
+          );
+        }
+        const trashed = [];
+        for (const key of otherKeys) {
+          const item = await itemByKey(requestData.libraryID, key);
+          if (!item || !item.deleted) {
+            return errorResponse(
+              500,
+              "merge-readback-failed",
+              `Merged item '${key}' was not marked deleted by Zotero.`,
+              true,
+              { key }
+            );
+          }
+          trashed.push(key);
+        }
+        return jsonResponse(200, {
+          merged: true,
+          master: { key: master.key, version: master.clientVersion },
+          trashed,
+        });
+      }
+      catch (error) {
+        return internalError(error, "Zotero could not merge the items.");
+      }
+    }
+  };
+}
+
 async function startup(data) {
   bridgeVersion = data && data.version ? String(data.version) : "unknown";
   await Zotero.initializationPromise;
@@ -1209,6 +1358,7 @@ async function startup(data) {
   Zotero.Server.Endpoints[ANNOTATION_NOTE_ROUTE] = annotationNoteEndpointClass();
   Zotero.Server.Endpoints[TAG_RENAME_ROUTE] = tagRenameEndpointClass();
   Zotero.Server.Endpoints[TAG_MERGE_ROUTE] = tagMergeEndpointClass();
+  Zotero.Server.Endpoints[ITEM_MERGE_ROUTE] = itemMergeEndpointClass();
   Zotero.debug(`Zotero Modified Bridge ${bridgeVersion} started`);
 }
 
