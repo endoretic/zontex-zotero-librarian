@@ -16,6 +16,8 @@ ADDON = ROOT / "companion" / "zotero-modified-bridge"
 MARKETPLACE = ROOT / ".agents" / "plugins" / "marketplace.json"
 DIST = ROOT / "dist"
 RELEASE_SOURCE = PLUGIN / ".codex-plugin" / "release-source.json"
+LICENSE = ROOT / "LICENSE"
+THIRD_PARTY_NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
@@ -30,7 +32,7 @@ def write_zip_text(archive: zipfile.ZipFile, name: str, text: str) -> None:
 
 
 def zip_tree(source: Path, target: Path, replacements: dict[Path, str] | None = None) -> None:
-    replacements = replacements or {}
+    pending = dict(replacements or {})
     with zipfile.ZipFile(
         target,
         "w",
@@ -42,11 +44,13 @@ def zip_tree(source: Path, target: Path, replacements: dict[Path, str] | None = 
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
             relative = path.relative_to(source)
-            replacement = replacements.get(relative)
+            replacement = pending.pop(relative, None)
             if replacement is None:
                 archive.write(path, relative.as_posix())
             else:
                 write_zip_text(archive, relative.as_posix(), replacement)
+        for relative, replacement in sorted(pending.items(), key=lambda item: item[0].as_posix()):
+            write_zip_text(archive, relative.as_posix(), replacement)
 
 
 def normalize_repository(value: str | None) -> str | None:
@@ -120,6 +124,8 @@ def zip_marketplace_bundle(target: Path, version: str, repository: str | None) -
         strict_timestamps=False,
     ) as archive:
         archive.write(MARKETPLACE, ".agents/plugins/marketplace.json")
+        archive.write(LICENSE, "LICENSE")
+        archive.write(THIRD_PARTY_NOTICES, "THIRD_PARTY_NOTICES.md")
         write_zip_text(archive, "INSTALL.md", plugin_install_guide(version, repository))
         for path in sorted(PLUGIN.rglob("*")):
             if not path.is_file() or "__pycache__" in path.parts:
@@ -283,10 +289,17 @@ def main() -> int:
     zip_marketplace_bundle(bundle, version, repository)
 
     addon_for_release = release_addon_manifest(addon_manifest, repository)
+    legal_files = {
+        Path("LICENSE"): LICENSE.read_text(encoding="utf-8"),
+        Path("THIRD_PARTY_NOTICES.md"): THIRD_PARTY_NOTICES.read_text(encoding="utf-8"),
+    }
     zip_tree(
         ADDON,
         xpi,
-        {Path("manifest.json"): json.dumps(addon_for_release, ensure_ascii=False, indent=2) + "\n"},
+        {
+            Path("manifest.json"): json.dumps(addon_for_release, ensure_ascii=False, indent=2) + "\n",
+            **legal_files,
+        },
     )
 
     artifacts = [bundle, xpi]
