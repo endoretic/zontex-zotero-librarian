@@ -52,6 +52,7 @@ function loadBridge(overrides = {}) {
   };
   const context = vm.createContext({
     ChromeUtils: overrides.ChromeUtils,
+    Components: overrides.Components,
     Zotero: zotero,
     console,
     setTimeout,
@@ -68,8 +69,9 @@ function loadBridge(overrides = {}) {
     "loadSDTDocument",
     "materializedSDTSegments",
     "documentSegmentsEndpointClass",
-    "annotationEndpointClass",
+    "annotationsEndpointClass",
     "annotationNoteEndpointClass",
+    "validSDTRefPath",
     "tagImpact",
     "tagRenameEndpointClass",
     "tagMergeEndpointClass",
@@ -187,6 +189,158 @@ test("navigate opens an annotation at its parent attachment", async () => {
   });
   assert.equal(result[0], 200);
   assert.deepEqual(JSON.parse(JSON.stringify(opened)), [20, { annotationID: "ANN00001" }]);
+});
+
+test("SDT loading passes the attachment ID to Zotero's reader", async () => {
+  const attachment = makeItem("PDF00001", { id: 77 });
+  let call;
+  const document = { metadata: { source: { hash: "hash" } }, content: [] };
+  const { api } = loadBridge({
+    Zotero: {
+      SDT: {
+        async getReader(...args) {
+          call = args;
+          return { materialize: async () => document };
+        },
+      },
+    },
+  });
+  assert.equal(await api.loadSDTDocument(attachment), document);
+  assert.deepEqual(JSON.parse(JSON.stringify(call)), [77, { isPriority: true }]);
+});
+
+test("SDT materialization emits one segment per leaf block", () => {
+  const { api } = loadBridge();
+  const document = {
+    content: [
+      {
+        type: "section",
+        flowClass: "body",
+        content: [
+          { type: "paragraph", content: [{ text: "Hello " }, { text: "world" }] },
+          { type: "paragraph", content: [{ text: "Second" }] },
+        ],
+      },
+      { type: "paragraph", flowClass: "excluded", content: [{ text: "Auxiliary" }] },
+    ],
+  };
+  const segments = JSON.parse(JSON.stringify(api.materializedSDTSegments(document)));
+  assert.deepEqual(segments.map(({ id, text }) => ({ id, text })), [
+    { id: "block:0.0", text: "Hello world" },
+    { id: "block:0.1", text: "Second" },
+  ]);
+  assert.deepEqual(segments[0].spans.map((span) => span.ref), [[0, 0, 0], [0, 0, 1]]);
+  assert.equal(api.materializedSDTSegments(document, true).length, 3);
+});
+
+test("annotation endpoint rejects malformed raw RefPaths", async () => {
+  const attachment = makeItem("PDF00001", {
+    id: 77,
+    libraryID: 1,
+    isAttachment: () => true,
+    getAnnotations: () => [],
+  });
+  const view = { initializedPromise: Promise.resolve(), createAnnotationFromSDT() {} };
+  const reader = {
+    itemID: 77,
+    type: "pdf",
+    _initPromise: Promise.resolve(),
+    _internalReader: { _primaryView: view },
+  };
+  const { api } = loadBridge({
+    items: new Map([[attachment.key, attachment]]),
+    Zotero: {
+      getMainWindow: () => ({ Zotero_Tabs: { selectedType: "reader", selectedID: "tab" } }),
+      Reader: { getByTabID: () => reader },
+    },
+  });
+  const result = await endpoint(api.annotationsEndpointClass(), {
+    attachmentKey: attachment.key,
+    type: "highlight",
+    target: { kind: "sdt", start: [0, -1], end: [0, 2] },
+  });
+  assert.equal(result[0], 400);
+  assert.equal(responseBody(result).error, "invalid-sdt-target");
+});
+
+test("annotation deduplication includes the native source position", async () => {
+  const annotations = [];
+  const existing = makeItem("OLD00001", { annotationType: "highlight" });
+  const created = makeItem("NEW00001", { annotationType: "highlight" });
+  annotations.push(existing);
+  const attachment = makeItem("PDF00001", {
+    id: 77,
+    libraryID: 1,
+    isAttachment: () => true,
+    getAnnotations: () => annotations,
+  });
+  const document = {
+    metadata: { source: { hash: "hash" } },
+    content: [{ type: "paragraph", content: [{ text: "Hello" }] }],
+  };
+  const positions = { OLD00001: { pageIndex: 0 }, NEW00001: { pageIndex: 1 } };
+  const view = {
+    initializedPromise: Promise.resolve(),
+    sdtAnchorToPosition: async () => ({ pageIndex: 1 }),
+    createAnnotationFromSDT: async () => {
+      annotations.push(created);
+      return { id: created.key };
+    },
+    _iframeWindow: {},
+  };
+  const reader = {
+    itemID: 77,
+    type: "pdf",
+    _initPromise: Promise.resolve(),
+    _internalReader: { _primaryView: view },
+  };
+  const { api } = loadBridge({
+    items: new Map([[attachment.key, attachment]]),
+    Components: { utils: { cloneInto: (value) => value } },
+    Zotero: {
+      SDT: { getReader: async () => ({ materialize: async () => document }) },
+      Annotations: {
+        toJSONSync: (annotation) => ({
+          key: annotation.key,
+          type: "highlight",
+          text: "Hello",
+          comment: "",
+          color: "#ffd400",
+          position: positions[annotation.key],
+        }),
+      },
+      getMainWindow: () => ({ Zotero_Tabs: { selectedType: "reader", selectedID: "tab" } }),
+      Reader: { getByTabID: () => reader },
+    },
+  });
+  const result = await endpoint(api.annotationsEndpointClass(), {
+    attachmentKey: attachment.key,
+    sourceHash: "hash",
+    type: "highlight",
+    target: { segmentId: "block:0", start: 0, end: 5 },
+  });
+  assert.equal(result[0], 200);
+  assert.equal(responseBody(result).created, true);
+  assert.equal(responseBody(result).annotation.key, "NEW00001");
+});
+
+test("annotation-note rejects duplicate keys and a read-only parent", async () => {
+  const parent = makeItem("ITEM0001", { isEditable: () => false });
+  const { api } = loadBridge({ items: new Map([[parent.key, parent]]) });
+  const DuplicateEndpoint = api.annotationNoteEndpointClass();
+  const duplicate = await endpoint(DuplicateEndpoint, {
+    parentItemKey: parent.key,
+    annotationKeys: ["ANN00001", "ANN00001"],
+  });
+  assert.equal(duplicate[0], 400);
+  assert.equal(responseBody(duplicate).error, "invalid-annotation-keys");
+
+  const readOnly = await endpoint(api.annotationNoteEndpointClass(), {
+    parentItemKey: parent.key,
+    annotationKeys: ["ANN00001"],
+  });
+  assert.equal(readOnly[0], 423);
+  assert.equal(responseBody(readOnly).error, "library-read-only");
 });
 
 module.exports = { endpoint, loadBridge, makeItem, responseBody };
