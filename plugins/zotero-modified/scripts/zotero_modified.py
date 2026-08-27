@@ -252,6 +252,7 @@ def companion_info() -> dict[str, Any]:
         return {
             "available": True,
             "version": body.get("version") if isinstance(body, dict) else None,
+            "compatibility": body.get("compatibility") if isinstance(body, dict) else None,
             "manualInstallRequired": False,
         }
     return {

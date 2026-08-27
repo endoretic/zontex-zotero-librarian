@@ -49,11 +49,16 @@ class ZoteroManagerTests(unittest.TestCase):
         request.return_value = zm.Response(
             status=200,
             headers={"content-type": "application/json"},
-            text='{"version":"0.1.0"}',
+            text=(
+                '{"version":"0.1.0","compatibility":'
+                '{"experimental":true,"warnings":["review Zotero update"]}}'
+            ),
         )
         info = zm.companion_info()
         self.assertTrue(info["available"])
         self.assertFalse(info["manualInstallRequired"])
+        self.assertTrue(info["compatibility"]["experimental"])
+        self.assertEqual(info["compatibility"]["warnings"], ["review Zotero update"])
 
     def test_parse_assignment_keeps_equals_in_value(self):
         self.assertEqual(zm.parse_assignment("extra=a=b", label="--set"), ("extra", "a=b"))

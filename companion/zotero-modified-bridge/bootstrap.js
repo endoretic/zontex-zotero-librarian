@@ -6,6 +6,8 @@ const NAVIGATE_ROUTE = "/api/users/:userID/zotero-modified/navigate";
 const DOCUMENT_SEGMENTS_ROUTE = "/api/users/:userID/zotero-modified/document-segments";
 const ANNOTATIONS_ROUTE = "/api/users/:userID/zotero-modified/annotations";
 const ANNOTATION_NOTE_ROUTE = "/api/users/:userID/zotero-modified/annotations/note";
+const TESTED_ZOTERO_VERSION = "10.0.1";
+const PRIVATE_ANNOTATION_BACKEND = "private-reader-internals";
 const ROUTES = [
   STATUS_ROUTE,
   STYLES_ROUTE,
@@ -17,6 +19,7 @@ const ROUTES = [
   ANNOTATION_NOTE_ROUTE,
 ];
 let bridgeVersion = "unknown";
+const reportedCompatibilityWarnings = new Set();
 
 function jsonResponse(status, value) {
   return [status, "application/json", JSON.stringify(value, null, 2)];
@@ -98,14 +101,80 @@ function itemRecord(item) {
   };
 }
 
-function readerCapabilities(view, type) {
-  const annotationFromSDT = typeof view?.createAnnotationFromSDT === "function";
-  const pdfAnnotations = type === "pdf" && annotationFromSDT;
+function privateAnnotationSurface(reader) {
+  const internalReader = reader?._internalReader;
+  if (!internalReader) return { state: reader ? "initializing" : "inactive", compatible: false, missing: [] };
+  const missing = [];
+  if (!reader?._iframeWindow || typeof reader._iframeWindow !== "object") missing.push("reader._iframeWindow");
+  if (typeof internalReader._loadSDT !== "function") missing.push("reader._internalReader._loadSDT");
+  if (typeof internalReader._getSourceAnnotationMeta !== "function") {
+    missing.push("reader._internalReader._getSourceAnnotationMeta");
+  }
+  if (typeof internalReader._annotationManager?.addAnnotation !== "function") {
+    missing.push("reader._internalReader._annotationManager.addAnnotation");
+  }
+  if (typeof Components === "undefined" || typeof Components.utils?.cloneInto !== "function") {
+    missing.push("Components.utils.cloneInto");
+  }
+  return {
+    state: missing.length ? "incompatible" : "available",
+    compatible: missing.length === 0,
+    missing,
+  };
+}
+
+function annotationCompatibility(reader = null) {
+  const privateAPI = privateAnnotationSurface(reader);
+  let standardAvailable = false;
+  try {
+    standardAvailable = typeof reader?.createAnnotationFromSDT === "function"
+      || typeof reader?._internalReader?._primaryView?.createAnnotationFromSDT === "function";
+  }
+  catch (_) {}
+  const zoteroVersion = typeof Zotero.version === "string" ? Zotero.version : null;
+  const warnings = [];
+  if (zoteroVersion && zoteroVersion !== TESTED_ZOTERO_VERSION) {
+    warnings.push(
+      `Active annotation was tested with Zotero ${TESTED_ZOTERO_VERSION}; review private Reader compatibility for ${zoteroVersion}.`
+    );
+  }
+  if (standardAvailable) {
+    warnings.push(
+      "Zotero now exposes createAnnotationFromSDT; update the Bridge to use it as primary and keep the private backend as fallback."
+    );
+  }
+  if (privateAPI.state === "incompatible") {
+    warnings.push(`The experimental private annotation backend changed or failed: ${privateAPI.missing.join(", ")}.`);
+  }
+  return {
+    experimental: true,
+    backend: privateAPI.compatible ? PRIVATE_ANNOTATION_BACKEND : null,
+    testedZoteroVersion: TESTED_ZOTERO_VERSION,
+    zoteroVersion,
+    standardAvailable,
+    privateAPI,
+    warnings,
+  };
+}
+
+function reportCompatibilityWarnings(compatibility) {
+  for (let warning of compatibility.warnings) {
+    if (reportedCompatibilityWarnings.has(warning)) continue;
+    reportedCompatibilityWarnings.add(warning);
+    Zotero.logError(new Error(`[Zotero Modified Bridge] ${warning}`));
+  }
+}
+
+function readerCapabilities(reader, type) {
+  const annotation = annotationCompatibility(reader);
+  reportCompatibilityWarnings(annotation);
+  const pdfAnnotations = type === "pdf" && annotation.privateAPI.compatible;
   return {
     sdt: typeof Zotero.SDT?.getReader === "function",
-    createAnnotationFromSDT: annotationFromSDT,
+    createAnnotationFromSDT: annotation.privateAPI.compatible,
     highlight: pdfAnnotations,
     underline: pdfAnnotations,
+    annotation,
   };
 }
 
@@ -139,7 +208,7 @@ async function activeReaderRecord() {
     editable: typeof attachment.isEditable === "function"
       ? !!attachment.isEditable() && !attachment.deleted && !parent?.deleted
       : false,
-    capabilities: readerCapabilities(view, type),
+    capabilities: readerCapabilities(reader, type),
   };
 }
 
@@ -168,7 +237,9 @@ function internalError(error, message = "Unexpected Zotero Modified Bridge error
     return errorResponse(
       error.bridgeStatus,
       error.bridgeCode || "invalid-request",
-      error.message || "The request is invalid."
+      error.message || "The request is invalid.",
+      false,
+      error.bridgeDetails
     );
   }
   Zotero.logError(error);
@@ -192,9 +263,12 @@ function statusEndpointClass() {
       let { libraryID, method, searchParams } = requestData;
       if (method === "GET") {
         let all = coloredTags(libraryID);
+        const compatibility = annotationCompatibility(getActiveReader());
+        reportCompatibilityWarnings(compatibility);
         return jsonResponse(200, {
           bridge: "zotero-modified-bridge",
           version: bridgeVersion,
+          compatibility,
           coloredTags: all,
           statuses: all.filter((entry) => entry.name.startsWith("/")),
         });
@@ -569,7 +643,12 @@ async function activePDFAttachment(libraryID, attachmentKey) {
   if (reader.type !== "pdf") {
     return { response: errorResponse(422, "unsupported-reader", "Annotation V1 requires an active PDF Reader.") };
   }
-  return { reader, attachment, view: reader?._internalReader?._primaryView };
+  return {
+    reader,
+    internalReader: reader?._internalReader,
+    attachment,
+    view: reader?._internalReader?._primaryView,
+  };
 }
 
 function documentSourceHash(document) {
@@ -654,14 +733,17 @@ function annotationJSON(annotation) {
 }
 
 function sameAnnotationPosition(annotation, expectedPosition) {
-  if (!expectedPosition) return false;
+  if (!expectedPosition || annotation.deleted) return false;
   const position = annotationJSON(annotation).position;
-  return !!position && JSON.stringify(position) === JSON.stringify(expectedPosition);
-}
-
-function validSDTRefPath(value) {
-  return Array.isArray(value) && value.length > 0
-    && value.every((entry) => Number.isInteger(entry) && entry >= 0);
+  function canonical(value) {
+    if (typeof value === "number") return Math.round(value * 1000) / 1000;
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+    }
+    return value;
+  }
+  return !!position && JSON.stringify(canonical(position)) === JSON.stringify(canonical(expectedPosition));
 }
 
 function sdtAnchorForRange(segment, start, end) {
@@ -675,6 +757,111 @@ function sdtAnchorForRange(segment, start, end) {
     return [...last.ref, last.sourceEnd];
   }
   return { start: refFor(start, false), end: refFor(end, true) };
+}
+
+function privateAnnotationFailure(message, missing = []) {
+  const warning = `The experimental private annotation backend changed or failed: ${missing.join(", ") || message}.`;
+  reportCompatibilityWarnings({ warnings: [warning] });
+  const error = new Error(message);
+  error.bridgeStatus = 501;
+  error.bridgeCode = "annotation-backend-incompatible";
+  error.bridgeDetails = {
+    backend: PRIVATE_ANNOTATION_BACKEND,
+    experimental: true,
+    missing,
+  };
+  return error;
+}
+
+function unwrapReaderValue(value) {
+  if (!value || typeof value !== "object") return value;
+  if (value.wrappedJSObject) return value.wrappedJSObject;
+  if (typeof Components.utils?.waiveXrays === "function") {
+    return Components.utils.waiveXrays(value);
+  }
+  return value;
+}
+
+async function buildPrivateSDTAnnotation(active, sdtAnchor, type, text) {
+  const compatibility = annotationCompatibility(active.reader);
+  if (!compatibility.privateAPI.compatible) {
+    throw privateAnnotationFailure(
+      "The experimental native annotation backend is incompatible with this Zotero build.",
+      compatibility.privateAPI.missing
+    );
+  }
+
+  const internalReader = active.internalReader;
+  const sdt = unwrapReaderValue(await internalReader._loadSDT());
+  if (!sdt) {
+    const error = new Error("Structured Document Text is unavailable in the active Reader.");
+    error.bridgeStatus = 501;
+    error.bridgeCode = "sdt-unavailable";
+    throw error;
+  }
+  const mapper = unwrapReaderValue(sdt.mapper);
+  const missing = [];
+  if (typeof mapper?.sdtToSourcePosition !== "function") missing.push("sdt.mapper.sdtToSourcePosition");
+  if (typeof mapper?.transformAnnotationPosition !== "function") {
+    missing.push("sdt.mapper.transformAnnotationPosition");
+  }
+  if (missing.length) {
+    throw privateAnnotationFailure(
+      "Zotero's private SDT position mapper no longer matches the tested implementation.",
+      missing
+    );
+  }
+
+  const clonedAnchor = Components.utils.cloneInto(sdtAnchor, active.reader._iframeWindow);
+  let position = mapper.sdtToSourcePosition(clonedAnchor);
+  if (!position) {
+    const error = new Error("The SDT target could not be mapped to a native PDF position.");
+    error.bridgeStatus = 422;
+    error.bridgeCode = "annotation-position-unavailable";
+    throw error;
+  }
+  position = mapper.transformAnnotationPosition(position, type);
+  const meta = internalReader._getSourceAnnotationMeta(position);
+  if (!meta?.sortIndex) {
+    const error = new Error("The active PDF view could not resolve annotation page metadata.");
+    error.bridgeStatus = 422;
+    error.bridgeCode = "annotation-metadata-unavailable";
+    throw error;
+  }
+  return {
+    position,
+    text,
+    sortIndex: meta.sortIndex,
+    pageLabel: meta.pageLabel || "",
+  };
+}
+
+function createPrivateSDTAnnotation(active, built, { type, color, comment, tags }) {
+  // ponytail: Keep this adapter as the primary path until Zotero exposes the
+  // desktop API; the compatibility probe tells us when to invert it to fallback.
+  const payload = Components.utils.cloneInto({
+    type,
+    color,
+    comment,
+    tags,
+    position: built.position,
+    text: built.text,
+    sortIndex: built.sortIndex,
+    pageLabel: built.pageLabel,
+  }, active.reader._iframeWindow);
+  return active.internalReader._annotationManager.addAnnotation(payload);
+}
+
+async function waitForAnnotationItem(attachment, key) {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const annotation = attachment.getAnnotations().find((item) => item.key === key);
+    try {
+      if (annotation?.annotationType && annotation.annotationPosition) return annotation;
+    }
+    catch (_) {}
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return null;
 }
 
 function annotationsEndpointClass() {
@@ -703,46 +890,31 @@ function annotationsEndpointClass() {
 
         const active = await activePDFAttachment(requestData.libraryID, attachmentKey.trim());
         if (active.response) return active.response;
-        if (typeof active.view?.createAnnotationFromSDT !== "function") {
-          return errorResponse(501, "annotation-unavailable", "Native SDT annotation creation is unavailable in this Zotero build.", true);
-        }
         if (typeof active.attachment.isEditable !== "function"
           || !active.attachment.isEditable() || active.attachment.deleted) {
           return errorResponse(423, "library-read-only", "The active attachment or library is read-only.", true);
         }
 
-        let sdtAnchor;
-        let text = "";
-        if (body.target?.kind === "sdt") {
-          if (!validSDTRefPath(body.target.start) || !validSDTRefPath(body.target.end)) {
-            return errorResponse(400, "invalid-sdt-target", "raw SDT targets require start and end RefPaths");
-          }
-          sdtAnchor = { start: body.target.start, end: body.target.end };
+        const target = body.target;
+        if (!target || typeof target.segmentId !== "string"
+          || !Number.isInteger(target.start) || !Number.isInteger(target.end)
+          || target.start < 0 || target.end <= target.start) {
+          return errorResponse(400, "invalid-target", "target must contain segmentId and a non-empty [start,end) range");
         }
-        else {
-          const target = body.target;
-          if (!target || typeof target.segmentId !== "string"
-            || !Number.isInteger(target.start) || !Number.isInteger(target.end)
-            || target.start < 0 || target.end <= target.start) {
-            return errorResponse(400, "invalid-target", "target must contain segmentId and a non-empty [start,end) range");
-          }
-          const document = await loadSDTDocument(active.attachment);
-          if (!document) return errorResponse(501, "sdt-unavailable", "Structured Document Text is unavailable in this Zotero build.", true);
-          if (typeof body.sourceHash !== "string" || !body.sourceHash
-            || body.sourceHash !== documentSourceHash(document)) {
-            return errorResponse(412, "document-changed", "The document changed; refetch segments and relocate the target.", true);
-          }
-          const segment = materializedSDTSegments(document).find((entry) => entry.id === target.segmentId);
-          if (!segment) return errorResponse(404, "segment-not-found", "The requested document segment was not found.");
-          if (target.end > segment.text.length) return errorResponse(400, "invalid-target", "target end exceeds segment text length");
-          text = segment.text.slice(target.start, target.end);
-          sdtAnchor = sdtAnchorForRange(segment, target.start, target.end);
+        const document = await loadSDTDocument(active.attachment);
+        if (!document) return errorResponse(501, "sdt-unavailable", "Structured Document Text is unavailable in this Zotero build.", true);
+        if (typeof body.sourceHash !== "string" || !body.sourceHash
+          || body.sourceHash !== documentSourceHash(document)) {
+          return errorResponse(412, "document-changed", "The document changed; refetch segments and relocate the target.", true);
         }
+        const segment = materializedSDTSegments(document).find((entry) => entry.id === target.segmentId);
+        if (!segment) return errorResponse(404, "segment-not-found", "The requested document segment was not found.");
+        if (target.end > segment.text.length) return errorResponse(400, "invalid-target", "target end exceeds segment text length");
+        const text = segment.text.slice(target.start, target.end);
+        const sdtAnchor = sdtAnchorForRange(segment, target.start, target.end);
 
-        let expectedPosition = null;
-        if (text && typeof active.view?.sdtAnchorToPosition === "function") {
-          expectedPosition = await active.view.sdtAnchorToPosition(sdtAnchor);
-        }
+        const built = await buildPrivateSDTAnnotation(active, sdtAnchor, type, text);
+        const expectedPosition = built.position;
         const duplicate = text
           ? active.attachment.getAnnotations().find((annotation) => {
             if (!sameAnnotationPosition(annotation, expectedPosition)) return false;
@@ -761,17 +933,9 @@ function annotationsEndpointClass() {
           });
         }
 
-        const payload = { sdtAnchor, type, color, comment, tags };
-        const iframeWindow = active.view?._iframeWindow;
-        if (!iframeWindow || typeof Components === "undefined"
-          || typeof Components.utils?.cloneInto !== "function") {
-          return errorResponse(501, "reader-bridge-unavailable", "The active Reader iframe is unavailable.", true);
-        }
-        const created = await active.view.createAnnotationFromSDT(
-          Components.utils.cloneInto(payload, iframeWindow)
-        );
+        const created = createPrivateSDTAnnotation(active, built, { type, color, comment, tags });
         const createdKey = created?.id || created?.key || null;
-        const annotation = active.attachment.getAnnotations().find((item) => item.key === createdKey)
+        const annotation = await waitForAnnotationItem(active.attachment, createdKey)
           || (text ? active.attachment.getAnnotations().find((item) => (
             sameAnnotationPosition(item, expectedPosition)
             && item.annotationType === type
@@ -861,6 +1025,7 @@ function annotationNoteEndpointClass() {
 async function startup(data) {
   bridgeVersion = data && data.version ? String(data.version) : "unknown";
   await Zotero.initializationPromise;
+  reportCompatibilityWarnings(annotationCompatibility());
   Zotero.Server.Endpoints[STATUS_ROUTE] = statusEndpointClass();
   Zotero.Server.Endpoints[STYLES_ROUTE] = stylesEndpointClass();
   Zotero.Server.Endpoints[CONTEXT_ROUTE] = contextEndpointClass();
@@ -874,6 +1039,7 @@ async function startup(data) {
 
 function shutdown() {
   for (let route of ROUTES) delete Zotero.Server.Endpoints[route];
+  reportedCompatibilityWarnings.clear();
   bridgeVersion = "unknown";
 }
 
