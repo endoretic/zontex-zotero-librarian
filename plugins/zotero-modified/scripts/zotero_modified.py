@@ -46,6 +46,7 @@ MODIFIED_ANNOTATIONS_PATH = f"{LOCAL_USER}/zotero-modified/annotations"
 MODIFIED_ANNOTATION_NOTE_PATH = f"{LOCAL_USER}/zotero-modified/annotations/note"
 MODIFIED_TAG_RENAME_PATH = f"{LOCAL_USER}/zotero-modified/tags/rename"
 MODIFIED_TAG_MERGE_PATH = f"{LOCAL_USER}/zotero-modified/tags/merge"
+MODIFIED_ITEM_MERGE_PATH = f"{LOCAL_USER}/zotero-modified/items/merge"
 STATUS_PREFIX = "/"
 RATE_LINE_RE = re.compile(r"^\s*rate\s*:\s*([1-5])\s*$", re.IGNORECASE)
 CSL_NAMESPACE = "http://purl.org/net/xbiblio/csl"
@@ -1396,6 +1397,113 @@ def cmd_merge_tags(args: argparse.Namespace) -> None:
     dump_json(preview)
 
 
+def parse_expected_version(raw: str) -> tuple[str, int]:
+    if not isinstance(raw, str) or "=" not in raw:
+        exit_with("--expected-version must use ITEM_KEY=VERSION syntax")
+    key, raw_version = raw.rsplit("=", 1)
+    key = key.strip()
+    try:
+        version = int(raw_version)
+    except ValueError:
+        exit_with("--expected-version version must be a non-negative integer")
+    if not key or version < 0:
+        exit_with("--expected-version must use a non-empty item key and non-negative version")
+    return key, version
+
+
+def item_children(item_key: str) -> list[dict[str, Any]]:
+    value = api_get(f"{LOCAL_USER}/items/{urllib.parse.quote(item_key)}/children")
+    if not isinstance(value, list):
+        exit_with(f"Unexpected Zotero child-item shape for: {item_key}")
+    return [data_of(row) for row in value]
+
+
+def merge_child_counts(item_key: str) -> dict[str, int]:
+    children = item_children(item_key)
+    attachments = [child for child in children if child.get("itemType") == "attachment"]
+    annotation_count = sum(child.get("itemType") == "annotation" for child in children)
+    for attachment in attachments:
+        key = attachment.get("key")
+        if key:
+            annotation_count += sum(
+                child.get("itemType") == "annotation" for child in item_children(str(key))
+            )
+    return {
+        "attachmentCount": len(attachments),
+        "noteCount": sum(child.get("itemType") == "note" for child in children),
+        "annotationCount": annotation_count,
+    }
+
+
+def merge_item_summary(data: dict[str, Any], child_counts: dict[str, int]) -> dict[str, Any]:
+    return {
+        "key": data.get("key"),
+        "version": data.get("version"),
+        "itemType": data.get("itemType"),
+        "title": data.get("title"),
+        "DOI": data.get("DOI"),
+        "date": data.get("date"),
+        "tagCount": len(data.get("tags", [])) if isinstance(data.get("tags"), list) else 0,
+        "collectionCount": len(data.get("collections", [])) if isinstance(data.get("collections"), list) else 0,
+        **child_counts,
+    }
+
+
+def cmd_merge_items(args: argparse.Namespace) -> None:
+    master_key = args.master.strip()
+    other_keys = [key.strip() for key in args.other]
+    keys = [master_key, *other_keys]
+    if not master_key or not other_keys or any(not key for key in other_keys):
+        exit_with("--master and at least one non-empty --other item key are required")
+    if len(other_keys) > 20:
+        exit_with("At most 20 --other item keys may be merged at once")
+    if len(set(keys)) != len(keys):
+        exit_with("--master and --other item keys must be unique")
+
+    expected_versions: dict[str, int] = {}
+    for raw in args.expected_version:
+        key, version = parse_expected_version(raw)
+        if key in expected_versions:
+            exit_with(f"Duplicate --expected-version for item key: {key}")
+        expected_versions[key] = version
+    if set(expected_versions) != set(keys):
+        exit_with("Provide exactly one --expected-version for every master and other item key")
+
+    items = [
+        data_of(api_get(f"{LOCAL_USER}/items/{urllib.parse.quote(key)}"))
+        for key in keys
+    ]
+    summaries = [
+        merge_item_summary(item, merge_child_counts(str(item.get("key") or key)))
+        for item, key in zip(items, keys)
+    ]
+    preview = {
+        "action": "merge-items",
+        "master": summaries[0],
+        "others": summaries[1:],
+        "expectedVersions": expected_versions,
+        "committed": False,
+    }
+    if not args.yes:
+        dump_json(preview)
+        return
+    preview.update(
+        {
+            "committed": True,
+            "response": bridge_post(
+                MODIFIED_ITEM_MERGE_PATH,
+                {
+                    "master": master_key,
+                    "others": other_keys,
+                    "expectedVersions": expected_versions,
+                },
+                "POST Bridge item merge",
+            ),
+        }
+    )
+    dump_json(preview)
+
+
 def cmd_install_csl(args: argparse.Namespace) -> None:
     csl = Path(args.file).read_text(encoding="utf-8")
     metadata = find_csl_metadata(csl)
@@ -1699,6 +1807,17 @@ def build_parser() -> argparse.ArgumentParser:
     annotation_note.add_argument("--no-header", action="store_true")
     annotation_note.add_argument("--yes", action="store_true")
     annotation_note.set_defaults(func=cmd_annotations_to_note)
+
+    merge_items = commands.add_parser(
+        "merge-items", help="Preview or natively merge top-level regular items"
+    )
+    merge_items.add_argument("--master", required=True)
+    merge_items.add_argument("--other", action="append", required=True)
+    merge_items.add_argument(
+        "--expected-version", action="append", required=True, metavar="ITEM_KEY=VERSION"
+    )
+    merge_items.add_argument("--yes", action="store_true")
+    merge_items.set_defaults(func=cmd_merge_items)
 
     install_csl = commands.add_parser("install-csl", help="Validate, preview, and install a CSL file")
     install_csl.add_argument("--file", required=True)
