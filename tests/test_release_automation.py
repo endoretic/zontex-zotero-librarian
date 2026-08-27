@@ -123,6 +123,23 @@ class ReleaseAutomationTests(unittest.TestCase):
         )
         self.assertEqual(policy.release_kind, "none")
 
+    def test_paired_manifest_change_requests_an_explicit_version_release(self) -> None:
+        policy = RELEASE_POLICY.classify(
+            [
+                "plugins/zontex/.codex-plugin/plugin.json",
+                "companion/zontex-bridge/manifest.json",
+            ]
+        )
+        self.assertEqual(policy.release_kind, "patch")
+        self.assertTrue(policy.explicit_version)
+
+    def test_single_manifest_change_is_not_an_explicit_version_release(self) -> None:
+        policy = RELEASE_POLICY.classify(
+            ["plugins/zontex/.codex-plugin/plugin.json"]
+        )
+        self.assertEqual(policy.release_kind, "patch")
+        self.assertFalse(policy.explicit_version)
+
     def test_initial_push_uses_git_diff_tree_root(self) -> None:
         completed = Mock(stdout="plugins/zontex/scripts/update_release.py\n")
         with patch.object(RELEASE_POLICY.subprocess, "run", return_value=completed) as run:

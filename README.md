@@ -1,6 +1,4 @@
-# Zontex
-
-> Research library workflows for Codex and Zotero
+# Zontex — Research library workflows for Codex and Zotero
 
 > This repository is an independent open-source workflow adaptation. It is not developed by, endorsed by, or affiliated with Zotero, the Zotero project, OpenAI, or Ethereal Style and its author.
 
@@ -10,7 +8,7 @@
 
 ### 这是什么
 
-Zontex 是一套面向 Zotero 10 的本地研究资料工作流，由 Codex 插件和轻量的 Zontex Bridge 组成。Codex 负责理解任务、整理候选文献和执行写入规则；Bridge 只补足 Zotero Local API 尚未开放的原生能力，不修改 Zotero 本体。
+Zontex 是一套面向 Zotero 10 的本地研究资料工作流，由 Codex 插件和轻量的 Zontex Bridge 组成。Codex 负责理解任务、整理候选文献和执行写入规则；Bridge 补足 Zotero Local API 尚未开放的原生能力，不修改 Zotero 本体。
 
 项目改编自 [OpenAI Zotero 插件](https://github.com/openai/plugins/tree/main/plugins/zotero)，增加了全库去重与结构化 metadata，覆盖标签维护和原生条目合并，并加入 Reader 操作与实验性 PDF 注释。它也兼容 Ethereal Style 工作流采用的<sup>*</sup> `/状态`、`rate: N` 和 `#标签`约定。
 
@@ -30,7 +28,7 @@ Bridge 是窄权限层，不提供任意代码执行端点，也不接管普通 
 
 Zontex 可以整理文献列表并复用全库条目，也能维护 metadata 与阅读状态、合并标签和重复条目。它还支持渲染引文与 Reader 导航、CSL 管理，以及在当前 PDF 中创建实验性的原生 highlight 或 underline。
 
-[查看完整功能、案例 prompt 与“一条指令串起工作流”](docs/workflows.md)
+[查看完整功能、案例 prompt。“用一条指令串起工作流”](docs/workflows.md)
 
 ### Ethereal Style 标签与 metadata 约定
 
@@ -120,15 +118,61 @@ python .\scripts\build_release.py --clean
 
 ## English
 
-Zontex provides local research-library workflows for Zotero 10 through a Codex plugin and a narrow companion Bridge. It curates and deduplicates literature, manages structured metadata and CSL styles, performs guarded native maintenance, resolves Reader context, and supports experimental native PDF highlights and underlines. Zotero itself remains unmodified.
+### What is Zontex?
 
-See [features and end-to-end prompts](docs/workflows.md) or the [installation and update guide](docs/installation.md).
+Zontex is a local research-library workflow for Zotero 10, made up of a Codex plugin and the lightweight Zontex Bridge. Codex interprets requests, curates candidate literature, and applies the write policy. The Bridge fills in native capabilities that Zotero Local API does not yet expose, without modifying Zotero itself.
 
-### Install with Codex
+The project adapts the [OpenAI Zotero plugin](https://github.com/openai/plugins/tree/main/plugins/zotero), adding library-wide deduplication and structured metadata, tag maintenance and native item merging, Reader actions, and experimental PDF annotations. It is also compatible with the `/status`, `rate: N`, and `#tag` conventions used by Ethereal Style workflows.<sup>*</sup>
 
-Give Codex the repository URL or local path and ask it to test, build, add the local marketplace, install Zontex, and guide you through the one Zotero UI confirmation required for the XPI. Start the next task with `@Zontex status --require-write`.
+<sup>*</sup> Zontex is not a fork, extension, or companion product of Ethereal Style. “Compatible” only means that the Zotero metadata written by Zontex can be recognized by interfaces or workflows that use the same conventions.
 
-### Manual build
+### Architecture
+
+| Component | Responsibility |
+| --- | --- |
+| Zontex for Codex | Interpret requests, retrieve and deduplicate literature, plan writes, and enforce confirmation rules |
+| Authorized Zotero Local API | Read the library and perform routine CRUD for items, collections, notes, and related objects |
+| Zontex Bridge | Manage colored tags and CSL; resolve Reader context; provide native rendering and navigation; perform high-impact maintenance and experimental annotations |
+
+The Bridge is a narrowly scoped capability layer. It exposes no arbitrary-code execution endpoint and does not take over routine CRUD.
+
+### What it can do
+
+Zontex can curate literature lists while reusing records already present anywhere in the library. It can also maintain metadata and reading status, merge tags and duplicate items, render citations, navigate the Reader, manage CSL styles, and create experimental native highlights or underlines in the active PDF.
+
+[See all features, example prompts, and the “one prompt, end-to-end workflow” examples](docs/workflows.md#english).
+
+### Ethereal Style tag and metadata conventions
+
+When the user requests the Ethereal Style conventions, Zontex applies the following defaults:
+
+- `/To Read`, `/Reading`, and `/Done`: a small set of colored slash-prefixed status tags, with at most one status per item.
+- `rate: 1` through `rate: 5`: stored in `Extra` to express relevance to the current project, not the quality of the venue or authors.
+- `Topic A`, `Method`, and `Dataset`: ordinary topical tags without a `#Topic/` prefix. Native colors are reserved for a small number of stable, frequently reused topics.
+- `#Role/Core`, `#Role/Method`, and `#Role/Gap`: three optional role tags, used only when they add useful information.
+- A colored marker represents a native Zotero colored tag. A leading `#` or `/` does not assign a color by itself.
+
+### Installation
+
+#### Install through Codex (recommended)
+
+Give Codex the repository URL or local directory, then send:
+
+```text
+Install Zontex from <REPO_URL_OR_DIR>. Check the environment and run the project tests, build the local release
+packages, register the repository as a local Codex marketplace, and install Zontex. When I need to install the XPI
+in Zotero, stop and explain in plain language exactly which menu to open and which file to select. Do not bypass
+Zotero's confirmation. After Zotero restarts, run @Zontex status --require-write and verify that the plugin and
+persistent write authorization are available.
+```
+
+Codex handles the build, marketplace, and plugin commands. The user must still approve the first XPI installation in Zotero's Plugins/Add-ons Manager.
+
+#### Build manually or install from a GitHub Release
+
+You need Zotero 10.0.x, Python 3, and a Codex Desktop version that supports local marketplaces.
+
+Build and install from source:
 
 ```powershell
 python .\scripts\build_release.py --clean
@@ -136,6 +180,54 @@ codex plugin marketplace add "<REPO_DIR>"
 codex plugin add zontex@zontex-zotero-librarian
 ```
 
-Install the matching `dist\zontex-bridge-<VERSION>.xpi` in Zotero and restart it. A GitHub Release installation uses the same-version Zontex ZIP and Bridge XPI plus the published checksums.
+In Zotero's Plugins/Add-ons Manager, choose **Install Add-on From File**, install `dist\zontex-bridge-<VERSION>.xpi`, and restart Zotero.
 
-Active PDF annotation is experimental and currently depends on feature-detected private Zotero Reader APIs. Project-authored code is licensed under [GPL-3.0-only](LICENSE); upstream MIT notices are retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+For a GitHub Release installation, download `zontex-<VERSION>.zip` and `zontex-bridge-<VERSION>.xpi` from the same release, verify them against `checksums.json`, extract the ZIP to a stable directory, and repeat the marketplace and XPI steps above.
+
+[See the full installation, update, and uninstall guide](docs/installation.md#english).
+
+### Updating
+
+If you originally gave the repository to Codex, send:
+
+```text
+Check whether Zontex has an update. First determine whether the current installation comes from a Git checkout or
+a GitHub Release. Preview only the versions, changes, and verification information. If there are local changes or
+files would be replaced, stop and wait for my confirmation before updating. When finished, rerun
+@Zontex status --require-write.
+```
+
+To inspect a Release update manually:
+
+```powershell
+python .\plugins\zontex\scripts\update_release.py
+```
+
+After reviewing and approving the update, run:
+
+```powershell
+python .\plugins\zontex\scripts\update_release.py --apply --yes --reinstall-codex
+```
+
+The Bridge uses Zotero's native add-on update mechanism. The updater will not overwrite a Git checkout; resolve local changes first, then use `git pull --ff-only`.
+
+### Write safety
+
+- The first Zotero operation in every task is `status --require-write`. Stop immediately if the API, authorization, or required Bridge capability is unavailable.
+- Multi-item imports and metadata batches receive one consolidated confirmation.
+- Tag maintenance and native item merging require an exact affected-item count or object versions.
+- A stale SDT hash, tag count, or item version stops the operation before any write.
+- Prefer moving items to Zotero's trash. Permanent deletion still requires a separate confirmation of the exact target.
+
+Active annotation is experimental. Zotero 10.0.1 does not expose a public desktop write API for this operation, so the current implementation feature-detects private Reader mapper and annotation-manager APIs. `status` and `context` report Zotero version drift, a newly available public API, or a private API that no longer works. Once a public API is available, it should become the primary path and the private implementation should remain only as a fallback.
+
+### Development
+
+```powershell
+python -m unittest discover -s .\plugins\zontex\tests -v
+python -m unittest discover -s .\tests -v
+node .\tests\bridge_contract.test.cjs
+python .\scripts\build_release.py --clean
+```
+
+Project-authored code is licensed under the [GNU General Public License v3.0 only](LICENSE). Portions adapted from the OpenAI Zotero plugin retain their MIT notice; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -13,10 +13,15 @@ FUNCTIONAL_PREFIXES = (
     "plugins/zontex/scripts/",
     "plugins/zontex/skills/",
 )
+VERSION_FILES = {
+    "plugins/zontex/.codex-plugin/plugin.json",
+    "companion/zontex-bridge/manifest.json",
+}
 FUNCTIONAL_FILES = {
     "companion/zontex-bridge/bootstrap.js",
     "scripts/build_release.py",
     "scripts/release_policy.py",
+    *VERSION_FILES,
 }
 ZERO_SHA = "0" * 40
 
@@ -24,6 +29,7 @@ ZERO_SHA = "0" * 40
 @dataclass(frozen=True)
 class ReleasePolicy:
     release_kind: str
+    explicit_version: bool
     changed_files: list[str]
     functional_files: list[str]
     nonfunctional_files: list[str]
@@ -36,11 +42,13 @@ def is_functional(path: str) -> bool:
 def classify(paths: list[str], force_patch: bool = False) -> ReleasePolicy:
     changed_files = sorted({path.replace("\\", "/") for path in paths if path})
     functional_files = [path for path in changed_files if is_functional(path)]
+    explicit_version = VERSION_FILES.issubset(changed_files)
     if force_patch:
         functional_files.append("manual release request")
     nonfunctional_files = [path for path in changed_files if path not in functional_files]
     return ReleasePolicy(
         release_kind="patch" if functional_files else "none",
+        explicit_version=explicit_version,
         changed_files=changed_files,
         functional_files=functional_files,
         nonfunctional_files=nonfunctional_files,
@@ -69,6 +77,7 @@ def git_changed_files(base: str | None, head: str, working_tree: bool) -> list[s
 def write_github_output(path: Path, policy: ReleasePolicy) -> None:
     values = {
         "release_kind": policy.release_kind,
+        "explicit_version": str(policy.explicit_version).lower(),
         "changed": str(bool(policy.changed_files)).lower(),
         "functional_files": ", ".join(policy.functional_files),
         "nonfunctional_files": ", ".join(policy.nonfunctional_files),
