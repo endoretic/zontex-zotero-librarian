@@ -1220,6 +1220,27 @@ def tag_item_count(name: str) -> int:
     return int(raw)
 
 
+def tag_item_keys(name: str) -> list[str]:
+    keys: list[str] = []
+    start = 0
+    while True:
+        query = urllib.parse.urlencode(
+            {"tag": name, "format": "keys", "limit": 100, "start": start}
+        )
+        response = api_get_response(f"{LOCAL_USER}/items?{query}")
+        raw_total = header(response.headers, "Total-Results")
+        if raw_total is None or not raw_total.isdigit():
+            exit_with(f"Zotero did not report the impact count for tag: {name}")
+        total = int(raw_total)
+        page = [line.strip() for line in response.text.splitlines() if line.strip()]
+        keys.extend(page)
+        if len(keys) >= total:
+            return keys
+        if not page:
+            exit_with(f"Zotero returned an incomplete item-key list for tag: {name}")
+        start += len(page)
+
+
 def parse_counted_tag(raw: str, *, label: str = "--source") -> dict[str, Any]:
     if not isinstance(raw, str) or "=" not in raw:
         exit_with(f"{label} must use TAG=EXPECTED_COUNT")
@@ -1283,7 +1304,10 @@ def cmd_merge_tags(args: argparse.Namespace) -> None:
     if target in names or len(set(names)) != len(names):
         exit_with("--source names must be unique and must not equal --into")
     colors = colored_tag_map()
-    actual_counts = {name: tag_item_count(name) for name in [*names, target]}
+    source_keys = {name: set(tag_item_keys(name)) for name in names}
+    actual_counts = {name: len(source_keys[name]) for name in names}
+    target_count = tag_item_count(target)
+    affected_keys = set().union(*source_keys.values())
     preview = {
         "action": "merge-tags",
         "from": [
@@ -1298,8 +1322,8 @@ def cmd_merge_tags(args: argparse.Namespace) -> None:
         ],
         "into": target,
         "targetColor": colors.get(target),
-        "targetExists": actual_counts[target] > 0 or target in colors,
-        "uniqueAffectedItemsUpperBound": sum(actual_counts[name] for name in names),
+        "targetExists": target_count > 0 or target in colors,
+        "uniqueAffectedItems": len(affected_keys),
         "colorPolicy": args.color_policy,
         "committed": False,
     }

@@ -253,6 +253,16 @@ class ZoteroManagerTests(unittest.TestCase):
         self.assertEqual(zm.tag_item_count("Role/Method"), 7)
         self.assertIn("tag=Role%2FMethod", api_get_response.call_args.args[0])
 
+    @mock.patch.object(zm, "api_get_response")
+    def test_tag_item_keys_reads_every_page(self, api_get_response):
+        api_get_response.side_effect = [
+            zm.Response(status=200, headers={"Total-Results": "3"}, text="AAAA1111\nBBBB2222\n"),
+            zm.Response(status=200, headers={"Total-Results": "3"}, text="CCCC3333\n"),
+        ]
+        self.assertEqual(zm.tag_item_keys("Role/Method"), ["AAAA1111", "BBBB2222", "CCCC3333"])
+        self.assertIn("start=0", api_get_response.call_args_list[0].args[0])
+        self.assertIn("start=2", api_get_response.call_args_list[1].args[0])
+
     @mock.patch.object(zm, "tag_item_count")
     @mock.patch.object(zm, "colored_tag_map")
     def test_tag_rename_prints_consolidated_preview(self, colored_tag_map, tag_item_count):
@@ -280,10 +290,17 @@ class ZoteroManagerTests(unittest.TestCase):
 
     @mock.patch.object(zm, "bridge_post")
     @mock.patch.object(zm, "tag_item_count")
+    @mock.patch.object(zm, "tag_item_keys")
     @mock.patch.object(zm, "colored_tag_map")
-    def test_tag_merge_commits_one_native_request(self, colored_tag_map, tag_item_count, bridge_post):
+    def test_tag_merge_commits_one_native_request(
+        self, colored_tag_map, tag_item_keys, tag_item_count, bridge_post
+    ):
         colored_tag_map.return_value = {}
-        tag_item_count.side_effect = [4, 2, 0]
+        tag_item_keys.side_effect = [
+            ["AAAA1111", "BBBB2222", "CCCC3333", "DDDD4444"],
+            ["EEEE5555", "FFFF6666"],
+        ]
+        tag_item_count.return_value = 0
         bridge_post.return_value = {"merged": True, "affectedItems": 6}
         args = argparse.Namespace(
             source=["Legacy=4", "Old=2"],
@@ -306,7 +323,32 @@ class ZoteroManagerTests(unittest.TestCase):
             },
             "POST Bridge tag merge",
         )
-        self.assertTrue(json.loads(output.getvalue())["committed"])
+        preview = json.loads(output.getvalue())
+        self.assertTrue(preview["committed"])
+        self.assertEqual(preview["uniqueAffectedItems"], 6)
+
+    @mock.patch.object(zm, "tag_item_count", return_value=1)
+    @mock.patch.object(zm, "tag_item_keys")
+    @mock.patch.object(zm, "colored_tag_map", return_value={})
+    def test_tag_merge_preview_counts_overlapping_items_once(
+        self, _colored_tag_map, tag_item_keys, _tag_item_count
+    ):
+        tag_item_keys.side_effect = [
+            ["AAAA1111", "BBBB2222"],
+            ["BBBB2222", "CCCC3333"],
+        ]
+        args = argparse.Namespace(
+            source=["Legacy=2", "Old=2"],
+            into="Current",
+            color_policy="preserve-target",
+            yes=False,
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zm.cmd_merge_tags(args)
+        preview = json.loads(output.getvalue())
+        self.assertEqual(preview["uniqueAffectedItems"], 3)
+        self.assertTrue(preview["targetExists"])
 
     def test_invalid_field_is_rejected_before_write(self):
         data = {
