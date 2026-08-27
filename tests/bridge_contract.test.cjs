@@ -197,8 +197,20 @@ test("native merge requires an exact version map", () => {
 });
 
 test("native merge commits through Zotero's module and verifies readback", async () => {
-  const master = makeItem("MASTER01", { version: 2 });
-  const other = makeItem("OTHER001", { version: 4 });
+  const masterState = { collections: [10], attachments: [20], notes: [] };
+  const otherState = { collections: [11], attachments: [], notes: [21] };
+  const master = makeItem("MASTER01", {
+    version: 2,
+    getCollections: () => masterState.collections,
+    getAttachments: () => masterState.attachments,
+    getNotes: () => masterState.notes,
+  });
+  const other = makeItem("OTHER001", {
+    version: 4,
+    getCollections: () => otherState.collections,
+    getAttachments: () => otherState.attachments,
+    getNotes: () => otherState.notes,
+  });
   const { api } = loadBridge({
     items: new Map([[master.key, master], [other.key, other]]),
     ChromeUtils: {
@@ -207,6 +219,9 @@ test("native merge commits through Zotero's module and verifies readback", async
           assert.equal(target, master);
           assert.equal(others.length, 1);
           assert.equal(others[0], other);
+          masterState.collections.push(...otherState.collections);
+          masterState.attachments.push(...otherState.attachments);
+          masterState.notes.push(...otherState.notes);
           target.version++;
           others.forEach((item) => { item.deleted = true; });
         },
@@ -223,6 +238,40 @@ test("native merge commits through Zotero's module and verifies readback", async
     merged: true,
     master: { key: "MASTER01", version: 3 },
     trashed: ["OTHER001"],
+  });
+});
+
+test("native merge reports missing collections or children after readback", async () => {
+  const master = makeItem("MASTER01", {
+    version: 2,
+    getCollections: () => [10],
+    getAttachments: () => [],
+    getNotes: () => [],
+  });
+  const other = makeItem("OTHER001", {
+    version: 4,
+    getCollections: () => [11],
+    getAttachments: () => [20],
+    getNotes: () => [21],
+  });
+  const { api } = loadBridge({
+    items: new Map([[master.key, master], [other.key, other]]),
+    ChromeUtils: {
+      importESModule: () => ({ mergeItems: async (_target, others) => {
+        others.forEach((item) => { item.deleted = true; });
+      } }),
+    },
+  });
+  const result = await endpoint(api.itemMergeEndpointClass(), {
+    master: master.key,
+    others: [other.key],
+    expectedVersions: { MASTER01: 2, OTHER001: 4 },
+  });
+  assert.equal(result[0], 500);
+  assert.deepEqual(responseBody(result).details, {
+    missingCollections: [11],
+    missingAttachments: [20],
+    missingNotes: [21],
   });
 });
 
