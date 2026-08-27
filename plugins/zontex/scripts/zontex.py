@@ -32,21 +32,21 @@ from typing import Any, Iterable
 DEFAULT_BASE_URL = os.environ.get("ZOTERO_LOCAL_BASE_URL", "http://127.0.0.1:23119")
 LOCAL_USER = "/api/users/0"
 API_HEADERS = {"Zotero-API-Version": "3"}
-APP_NAME = "Zotero Modified"
+APP_NAME = "Zontex"
 TEXT_LIMIT = 500
 WRITE_TIMEOUT = 180.0
 MAX_BATCH = 50
-MODIFIED_STATUS_PATH = f"{LOCAL_USER}/zotero-modified/statuses"
-MODIFIED_STYLES_PATH = f"{LOCAL_USER}/zotero-modified/styles"
-MODIFIED_CONTEXT_PATH = f"{LOCAL_USER}/zotero-modified/context"
-MODIFIED_RENDER_PATH = f"{LOCAL_USER}/zotero-modified/render"
-MODIFIED_NAVIGATE_PATH = f"{LOCAL_USER}/zotero-modified/navigate"
-MODIFIED_DOCUMENT_SEGMENTS_PATH = f"{LOCAL_USER}/zotero-modified/document-segments"
-MODIFIED_ANNOTATIONS_PATH = f"{LOCAL_USER}/zotero-modified/annotations"
-MODIFIED_ANNOTATION_NOTE_PATH = f"{LOCAL_USER}/zotero-modified/annotations/note"
-MODIFIED_TAG_RENAME_PATH = f"{LOCAL_USER}/zotero-modified/tags/rename"
-MODIFIED_TAG_MERGE_PATH = f"{LOCAL_USER}/zotero-modified/tags/merge"
-MODIFIED_ITEM_MERGE_PATH = f"{LOCAL_USER}/zotero-modified/items/merge"
+ZONTEX_STATUS_PATH = f"{LOCAL_USER}/zontex/statuses"
+ZONTEX_STYLES_PATH = f"{LOCAL_USER}/zontex/styles"
+ZONTEX_CONTEXT_PATH = f"{LOCAL_USER}/zontex/context"
+ZONTEX_RENDER_PATH = f"{LOCAL_USER}/zontex/render"
+ZONTEX_NAVIGATE_PATH = f"{LOCAL_USER}/zontex/navigate"
+ZONTEX_DOCUMENT_SEGMENTS_PATH = f"{LOCAL_USER}/zontex/document-segments"
+ZONTEX_ANNOTATIONS_PATH = f"{LOCAL_USER}/zontex/annotations"
+ZONTEX_ANNOTATION_NOTE_PATH = f"{LOCAL_USER}/zontex/annotations/note"
+ZONTEX_TAG_RENAME_PATH = f"{LOCAL_USER}/zontex/tags/rename"
+ZONTEX_TAG_MERGE_PATH = f"{LOCAL_USER}/zontex/tags/merge"
+ZONTEX_ITEM_MERGE_PATH = f"{LOCAL_USER}/zontex/items/merge"
 STATUS_PREFIX = "/"
 RATE_LINE_RE = re.compile(r"^\s*rate\s*:\s*([1-5])\s*$", re.IGNORECASE)
 CSL_NAMESPACE = "http://purl.org/net/xbiblio/csl"
@@ -65,7 +65,14 @@ class Response:
 
 
 def dump_json(value: Any) -> None:
-    print(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=False))
+    text = json.dumps(value, indent=2, ensure_ascii=False, sort_keys=False)
+    encoding = getattr(sys.stdout, "encoding", None)
+    if encoding:
+        try:
+            text.encode(encoding)
+        except (LookupError, UnicodeEncodeError):
+            text = json.dumps(value, indent=2, ensure_ascii=True, sort_keys=False)
+    print(text)
 
 
 def exit_with(message: str) -> None:
@@ -183,7 +190,7 @@ def credential_path() -> Path:
         root = Path(os.environ["LOCALAPPDATA"])
     else:
         root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return root / "Codex" / "ZoteroModified" / "credentials.json"
+    return root / "Codex" / "Zontex" / "credentials.json"
 
 
 def read_credentials() -> dict[str, Any]:
@@ -249,7 +256,7 @@ def server_info() -> dict[str, Any]:
 
 
 def companion_info() -> dict[str, Any]:
-    response = request(MODIFIED_STATUS_PATH, timeout=3)
+    response = request(ZONTEX_STATUS_PATH, timeout=3)
     if response.status == 200:
         body = parse_body(response)
         return {
@@ -264,7 +271,7 @@ def companion_info() -> dict[str, Any]:
         "detail": (response.text or response.error or "unavailable")[:TEXT_LIMIT],
         "manualInstallRequired": True,
         "nextStep": (
-            "Install the matching Zotero Modified Bridge XPI manually in Zotero's "
+            "Install the matching Zontex Bridge XPI manually in Zotero's "
             "Plugins/Add-ons Manager, restart Zotero, then run status again."
         ),
     }
@@ -274,7 +281,7 @@ def require_companion() -> None:
     info = companion_info()
     if not info["available"]:
         exit_with(
-            "The Zotero Modified Bridge companion add-on is required for colored statuses "
+            "The Zontex Bridge companion add-on is required for colored statuses "
             "and CSL installation. First use requires a one-time manual installation of the "
             "matching released XPI in Zotero's Plugins/Add-ons Manager. Restart Zotero, then "
             "run status again."
@@ -406,7 +413,7 @@ def cmd_status(args: argparse.Namespace) -> None:
             "authorizationCached": bool(authorization),
             "authorizationRemembered": bool(authorization and authorization.get("remember")),
             "credentialPath": str(credential_path()),
-            "modifiedBridge": companion_info(),
+            "zontexBridge": companion_info(),
             "authorizationGate": {
                 "required": bool(getattr(args, "require_write", False)),
                 "passed": gate_passed,
@@ -581,7 +588,7 @@ def cmd_backup_collection(args: argparse.Namespace) -> None:
                 items_by_key[str(data["key"])] = data
 
     snapshot = {
-        "format": "zotero-modified-collection-backup-v1",
+        "format": "zontex-collection-backup-v1",
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "rootCollectionKey": root.get("key"),
         "collections": selected,
@@ -893,17 +900,17 @@ def cmd_set_rating(args: argparse.Namespace) -> None:
 
 def bridge_statuses() -> list[dict[str, Any]]:
     require_companion()
-    body = api_get(MODIFIED_STATUS_PATH)
+    body = api_get(ZONTEX_STATUS_PATH)
     if not isinstance(body, dict) or not isinstance(body.get("statuses"), list):
-        exit_with("Unexpected response from Zotero Modified Bridge")
+        exit_with("Unexpected response from Zontex Bridge")
     return body["statuses"]
 
 
 def bridge_colored_tags() -> list[dict[str, Any]]:
     require_companion()
-    body = api_get(MODIFIED_STATUS_PATH)
+    body = api_get(ZONTEX_STATUS_PATH)
     if not isinstance(body, dict) or not isinstance(body.get("coloredTags"), list):
-        exit_with("Unexpected response from Zotero Modified Bridge")
+        exit_with("Unexpected response from Zontex Bridge")
     return body["coloredTags"]
 
 
@@ -937,7 +944,7 @@ def cmd_set_colored_tag(args: argparse.Namespace) -> None:
         return
     response = require_ok(
         authorized_request(
-            MODIFIED_STATUS_PATH,
+            ZONTEX_STATUS_PATH,
             method="PUT",
             data={"name": name, "color": args.color, "position": args.position},
         ),
@@ -963,7 +970,7 @@ def cmd_clear_colored_tag(args: argparse.Namespace) -> None:
         return
     query = urllib.parse.urlencode({"name": name, "deleteTag": "0"})
     response = require_ok(
-        authorized_request(f"{MODIFIED_STATUS_PATH}?{query}", method="DELETE", data=None),
+        authorized_request(f"{ZONTEX_STATUS_PATH}?{query}", method="DELETE", data=None),
         f"DELETE color assignment for {name}",
     )
     preview.update({"committed": True, "status": response.status})
@@ -988,7 +995,7 @@ def cmd_create_status(args: argparse.Namespace) -> None:
         return
     response = require_ok(
         authorized_request(
-            MODIFIED_STATUS_PATH,
+            ZONTEX_STATUS_PATH,
             method="PUT",
             data={"name": name, "color": args.color, "position": args.position},
         ),
@@ -1050,7 +1057,7 @@ def cmd_delete_status(args: argparse.Namespace) -> None:
     require_companion()
     query = urllib.parse.urlencode({"name": name, "deleteTag": "1"})
     response = require_ok(
-        authorized_request(f"{MODIFIED_STATUS_PATH}?{query}", method="DELETE", data=None),
+        authorized_request(f"{ZONTEX_STATUS_PATH}?{query}", method="DELETE", data=None),
         f"DELETE slash-prefixed status {name}",
     )
     preview.update({"committed": True, "status": response.status})
@@ -1155,7 +1162,7 @@ def backup_csl(style_id: str, csl: str) -> Path:
 
 def bridge_style(style_id: str) -> dict[str, Any] | None:
     require_companion()
-    response = request(f"{MODIFIED_STYLES_PATH}?{urllib.parse.urlencode({'id': style_id})}")
+    response = request(f"{ZONTEX_STYLES_PATH}?{urllib.parse.urlencode({'id': style_id})}")
     if response.status == 404:
         return None
     require_ok(response, f"GET CSL style {style_id}")
@@ -1165,17 +1172,17 @@ def bridge_style(style_id: str) -> dict[str, Any] | None:
 
 def cmd_list_styles(_: argparse.Namespace) -> None:
     require_companion()
-    dump_json(api_get(MODIFIED_STYLES_PATH))
+    dump_json(api_get(ZONTEX_STYLES_PATH))
 
 
 def cmd_context(_: argparse.Namespace) -> None:
     require_companion()
-    dump_json(api_get(MODIFIED_CONTEXT_PATH))
+    dump_json(api_get(ZONTEX_CONTEXT_PATH))
 
 
 def cmd_render(args: argparse.Namespace) -> None:
     payload = bridge_post(
-        MODIFIED_RENDER_PATH,
+        ZONTEX_RENDER_PATH,
         {
             "itemKeys": args.item_key,
             "style": args.style,
@@ -1196,7 +1203,7 @@ def cmd_navigate(args: argparse.Namespace) -> None:
     action, item_key = next((action, key) for action, key in selected if key)
     dump_json(
         bridge_post(
-            MODIFIED_NAVIGATE_PATH,
+            ZONTEX_NAVIGATE_PATH,
             {"action": action, "itemKey": item_key},
             f"POST Bridge navigate ({action})",
         )
@@ -1211,7 +1218,7 @@ def cmd_document_segments(args: argparse.Namespace) -> None:
         params["attachmentKey"] = args.attachment_key
     if args.include_auxiliary:
         params["includeAuxiliary"] = "1"
-    dump_json(api_get(f"{MODIFIED_DOCUMENT_SEGMENTS_PATH}?{urllib.parse.urlencode(params)}"))
+    dump_json(api_get(f"{ZONTEX_DOCUMENT_SEGMENTS_PATH}?{urllib.parse.urlencode(params)}"))
 
 
 def cmd_create_annotation(args: argparse.Namespace) -> None:
@@ -1229,7 +1236,7 @@ def cmd_create_annotation(args: argparse.Namespace) -> None:
         dump_json(preview)
         return
     preview.update({"committed": True, "response": bridge_post(
-        MODIFIED_ANNOTATIONS_PATH, body, "POST Bridge annotation"
+        ZONTEX_ANNOTATIONS_PATH, body, "POST Bridge annotation"
     )})
     dump_json(preview)
 
@@ -1247,13 +1254,13 @@ def cmd_annotations_to_note(args: argparse.Namespace) -> None:
         dump_json(preview)
         return
     preview.update({"committed": True, "response": bridge_post(
-        MODIFIED_ANNOTATION_NOTE_PATH, body, "POST Bridge annotation note"
+        ZONTEX_ANNOTATION_NOTE_PATH, body, "POST Bridge annotation note"
     )})
     dump_json(preview)
 
 
 def colored_tag_map() -> dict[str, dict[str, Any]]:
-    body = api_get(MODIFIED_STATUS_PATH)
+    body = api_get(ZONTEX_STATUS_PATH)
     rows = body.get("coloredTags", []) if isinstance(body, dict) else []
     return {
         str(row["name"]): {
@@ -1340,7 +1347,7 @@ def cmd_rename_tag(args: argparse.Namespace) -> None:
         {
             "committed": True,
             "response": bridge_post(
-                MODIFIED_TAG_RENAME_PATH,
+                ZONTEX_TAG_RENAME_PATH,
                 {"from": source, "to": target, "expectedCount": args.expect_count},
                 "POST Bridge tag rename",
             ),
@@ -1388,7 +1395,7 @@ def cmd_merge_tags(args: argparse.Namespace) -> None:
         {
             "committed": True,
             "response": bridge_post(
-                MODIFIED_TAG_MERGE_PATH,
+                ZONTEX_TAG_MERGE_PATH,
                 {"sources": sources, "into": target, "colorPolicy": args.color_policy},
                 "POST Bridge tag merge",
             ),
@@ -1491,7 +1498,7 @@ def cmd_merge_items(args: argparse.Namespace) -> None:
         {
             "committed": True,
             "response": bridge_post(
-                MODIFIED_ITEM_MERGE_PATH,
+                ZONTEX_ITEM_MERGE_PATH,
                 {
                     "master": master_key,
                     "others": other_keys,
@@ -1523,7 +1530,7 @@ def cmd_install_csl(args: argparse.Namespace) -> None:
         preview["backup"] = str(backup_csl(metadata["id"], str(existing["csl"])))
     response = require_ok(
         authorized_request(
-            MODIFIED_STYLES_PATH,
+            ZONTEX_STYLES_PATH,
             method="POST",
             data={"csl": csl, "origin": Path(args.file).name},
         ),
@@ -1550,7 +1557,7 @@ def cmd_uninstall_csl(args: argparse.Namespace) -> None:
         preview["backup"] = str(backup_csl(args.id, str(existing["csl"])))
     query = urllib.parse.urlencode({"id": args.id})
     response = require_ok(
-        authorized_request(f"{MODIFIED_STYLES_PATH}?{query}", method="DELETE", data=None),
+        authorized_request(f"{ZONTEX_STYLES_PATH}?{query}", method="DELETE", data=None),
         f"DELETE CSL style {args.id}",
     )
     preview.update({"committed": True, "status": response.status})

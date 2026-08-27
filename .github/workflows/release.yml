@@ -4,9 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - "plugins/zotero-modified/scripts/**"
-      - "plugins/zotero-modified/skills/**"
-      - "companion/zotero-modified-bridge/bootstrap.js"
+      - "plugins/zontex/scripts/**"
+      - "plugins/zontex/skills/**"
+      - "companion/zontex-bridge/bootstrap.js"
       - "scripts/build_release.py"
       - "scripts/release_policy.py"
   workflow_dispatch:
@@ -52,8 +52,8 @@ jobs:
         if: steps.policy.outputs.release_kind == 'patch'
         run: |
           python -m unittest discover -s tests -v
-          python -m unittest discover -s plugins/zotero-modified/tests -v
-          node --check companion/zotero-modified-bridge/bootstrap.js
+          python -m unittest discover -s plugins/zontex/tests -v
+          node --check companion/zontex-bridge/bootstrap.js
 
       - name: Determine initial release
         if: steps.policy.outputs.release_kind == 'patch'
@@ -76,8 +76,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add plugins/zotero-modified/.codex-plugin/plugin.json companion/zotero-modified-bridge/manifest.json
-          version=$(python -c "import json; print(json.load(open('plugins/zotero-modified/.codex-plugin/plugin.json'))['version'])")
+          git add plugins/zontex/.codex-plugin/plugin.json companion/zontex-bridge/manifest.json
+          version=$(python -c "import json; print(json.load(open('plugins/zontex/.codex-plugin/plugin.json'))['version'])")
           git commit -m "chore(release): v${version} [skip ci]"
           git push origin HEAD:main
 
@@ -86,7 +86,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          version=$(python -c "import json; print(json.load(open('plugins/zotero-modified/.codex-plugin/plugin.json'))['version'])")
+          version=$(python -c "import json; print(json.load(open('plugins/zontex/.codex-plugin/plugin.json'))['version'])")
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build artifacts
@@ -103,4 +103,4 @@ jobs:
           target=$(git rev-parse HEAD)
           gh release create "v${VERSION}" dist/* --target "$target" \
             --notes-file dist/RELEASE_NOTES.md \
-            --title "Zotero Modified ${VERSION}"
+            --title "Zontex ${VERSION}"

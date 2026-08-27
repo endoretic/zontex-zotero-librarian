@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Classify a change set for the Zotero Modified release workflow."""
+"""Classify a change set for the Zontex release workflow."""
 from __future__ import annotations
 
 import argparse
@@ -10,11 +10,11 @@ from pathlib import Path
 
 
 FUNCTIONAL_PREFIXES = (
-    "plugins/zotero-modified/scripts/",
-    "plugins/zotero-modified/skills/",
+    "plugins/zontex/scripts/",
+    "plugins/zontex/skills/",
 )
 FUNCTIONAL_FILES = {
-    "companion/zotero-modified-bridge/bootstrap.js",
+    "companion/zontex-bridge/bootstrap.js",
     "scripts/build_release.py",
     "scripts/release_policy.py",
 }

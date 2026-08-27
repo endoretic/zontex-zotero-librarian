@@ -4,7 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const bridgePath = path.join(__dirname, "..", "companion", "zotero-modified-bridge", "bootstrap.js");
+const bridgePath = path.join(__dirname, "..", "companion", "zontex-bridge", "bootstrap.js");
 
 function makeItem(key, overrides = {}) {
   return {

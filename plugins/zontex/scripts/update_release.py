@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check and safely stage updates from a Zotero Modified GitHub release feed."""
+"""Check and safely stage updates from a Zontex GitHub release feed."""
 from __future__ import annotations
 
 import argparse
@@ -20,11 +20,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-PLUGIN_MANIFEST = ROOT / "plugins" / "zotero-modified" / ".codex-plugin" / "plugin.json"
-RELEASE_SOURCE = ROOT / "plugins" / "zotero-modified" / ".codex-plugin" / "release-source.json"
+PLUGIN_MANIFEST = ROOT / "plugins" / "zontex" / ".codex-plugin" / "plugin.json"
+RELEASE_SOURCE = ROOT / "plugins" / "zontex" / ".codex-plugin" / "release-source.json"
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
-USER_AGENT = "Zotero-Modified-for-Codex/1.0"
+USER_AGENT = "Zontex/1.0"
 
 
 class UpdateError(RuntimeError):
@@ -106,7 +106,7 @@ def installed_configuration(repository_override: str | None) -> tuple[str, str, 
             "No GitHub release feed is configured. Install a published ZIP release, or pass "
             "--repository OWNER/REPOSITORY while testing a development checkout."
         )
-    marketplace = str(source.get("marketplace", "zotero-modified-private"))
+    marketplace = str(source.get("marketplace", "zontex-zotero-librarian"))
     return installed_version, repository, marketplace
 
 
@@ -128,7 +128,7 @@ def build_update_plan(repository_override: str | None = None) -> UpdatePlan:
             checksums_url=None,
             marketplace=marketplace,
         )
-    bundle_name = f"zotero-modified-{latest_version}.zip"
+    bundle_name = f"zontex-{latest_version}.zip"
     return UpdatePlan(
         state="update_available",
         installed_version=installed_version,
@@ -173,8 +173,8 @@ def safe_extract(archive_bytes: bytes, target: Path) -> None:
 
 def verify_staging_directory(staging: Path, plan: UpdatePlan) -> None:
     marketplace = staging / ".agents" / "plugins" / "marketplace.json"
-    manifest = staging / "plugins" / "zotero-modified" / ".codex-plugin" / "plugin.json"
-    source = staging / "plugins" / "zotero-modified" / ".codex-plugin" / "release-source.json"
+    manifest = staging / "plugins" / "zontex" / ".codex-plugin" / "plugin.json"
+    source = staging / "plugins" / "zontex" / ".codex-plugin" / "release-source.json"
     if not marketplace.is_file() or not manifest.is_file() or not source.is_file():
         raise UpdateError("Downloaded bundle is missing the expected local marketplace structure")
     if str(read_json(manifest).get("version", "")) != plan.latest_version:
@@ -218,7 +218,7 @@ try {
       $result.codexReload = 'codex-command-not-found'
     } else {
       try {
-        & $codex.Source plugin add ("zotero-modified@" + $Marketplace) *>> $Log
+        & $codex.Source plugin add ("zontex@" + $Marketplace) *>> $Log
         $result.codexReload = 'requested'
       } catch {
         $result.codexReload = 'failed-see-log'
@@ -242,7 +242,7 @@ def schedule_apply(staging: Path, plan: UpdatePlan, reinstall_codex: bool) -> di
     timestamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     backup = ROOT.with_name(f"{ROOT.name}.backup-{plan.installed_version}-{timestamp}")
     log = ROOT.parent / f".{ROOT.name}.update-{timestamp}.json"
-    helper = Path(tempfile.gettempdir()) / f"zotero-modified-update-{uuid.uuid4().hex}.ps1"
+    helper = Path(tempfile.gettempdir()) / f"zontex-update-{uuid.uuid4().hex}.ps1"
     helper.write_text(updater_script(), encoding="utf-8")
     flags = 0
     if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
@@ -292,7 +292,7 @@ def apply_update(plan: UpdatePlan, reinstall_codex: bool) -> dict:
     if not plan.bundle_url or not plan.checksums_url:
         raise UpdateError("Update plan is incomplete")
     checksums = read_remote_json(plan.checksums_url)
-    bundle_name = f"zotero-modified-{plan.latest_version}.zip"
+    bundle_name = f"zontex-{plan.latest_version}.zip"
     bundle = read_bytes(plan.bundle_url)
     expected = expected_checksum(checksums, bundle_name)
     observed = sha256_bytes(bundle)
@@ -312,7 +312,7 @@ def apply_update(plan: UpdatePlan, reinstall_codex: bool) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check or stage Zotero Modified release updates")
+    parser = argparse.ArgumentParser(description="Check or stage Zontex release updates")
     parser.add_argument("--repository", help="Override the configured GitHub OWNER/REPOSITORY")
     parser.add_argument("--apply", action="store_true", help="Download, verify, and schedule the update")
     parser.add_argument("--yes", action="store_true", help="Confirm replacing a release ZIP installation")
