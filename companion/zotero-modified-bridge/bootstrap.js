@@ -1,6 +1,15 @@
 const STATUS_ROUTE = "/api/users/:userID/zotero-modified/statuses";
 const STYLES_ROUTE = "/api/users/:userID/zotero-modified/styles";
-const ROUTES = [STATUS_ROUTE, STYLES_ROUTE];
+const CONTEXT_ROUTE = "/api/users/:userID/zotero-modified/context";
+const RENDER_ROUTE = "/api/users/:userID/zotero-modified/render";
+const NAVIGATE_ROUTE = "/api/users/:userID/zotero-modified/navigate";
+const ROUTES = [
+  STATUS_ROUTE,
+  STYLES_ROUTE,
+  CONTEXT_ROUTE,
+  RENDER_ROUTE,
+  NAVIGATE_ROUTE,
+];
 let bridgeVersion = "unknown";
 
 function jsonResponse(status, value) {
@@ -11,12 +20,133 @@ function textResponse(status, value) {
   return [status, "text/plain", String(value)];
 }
 
+function errorResponse(status, code, message, retryable = false, details = undefined) {
+  return jsonResponse(status, {
+    error: code,
+    message,
+    retryable,
+    ...(details === undefined ? {} : { details }),
+  });
+}
+
+function validateHexColor(value) {
+  return typeof value === "string" && /^#[0-9A-Fa-f]{6}$/.test(value);
+}
+
+function normalizeStringArray(value, { max = 20, itemMax = 100 } = {}) {
+  if (!Array.isArray(value) || value.length > max) return null;
+  const result = [];
+  for (let entry of value) {
+    if (typeof entry !== "string") return null;
+    entry = entry.trim().normalize();
+    if (!entry || entry.length > itemMax || result.includes(entry)) return null;
+    result.push(entry);
+  }
+  return result;
+}
+
+function mainWindow() {
+  return Zotero.getMainWindow?.() || null;
+}
+
+// Private/internal Zotero Reader surface. Keep isolated and feature-detect before use.
+// Verified against the supported Zotero 10.0.x line.
+function getActiveReader() {
+  const win = mainWindow();
+  if (!win?.Zotero_Tabs || win.Zotero_Tabs.selectedType !== "reader") return null;
+  if (typeof Zotero.Reader?.getByTabID !== "function") return null;
+  try {
+    return Zotero.Reader.getByTabID(win.Zotero_Tabs.selectedID) || null;
+  }
+  catch (error) {
+    Zotero.logError(error);
+    return null;
+  }
+}
+
+async function waitForReaderView(reader) {
+  await reader?._initPromise;
+  await reader?._internalReader?._primaryView?.initializedPromise;
+}
+
+async function itemByKey(libraryID, key) {
+  if (typeof key !== "string" || !key.trim()) return null;
+  return await Zotero.Items.getByLibraryAndKeyAsync(libraryID, key.trim());
+}
+
+function itemField(item, field) {
+  try {
+    return item?.getField(field) || null;
+  }
+  catch (_) {
+    return null;
+  }
+}
+
+function itemRecord(item) {
+  return {
+    key: item.key,
+    itemType: item.itemType,
+    title: itemField(item, "title"),
+  };
+}
+
+function readerCapabilities(view, type) {
+  const annotationFromSDT = typeof view?.createAnnotationFromSDT === "function";
+  const pdfAnnotations = type === "pdf" && annotationFromSDT;
+  return {
+    sdt: annotationFromSDT,
+    createAnnotationFromSDT: annotationFromSDT,
+    highlight: pdfAnnotations,
+    underline: pdfAnnotations,
+  };
+}
+
+async function activeReaderRecord() {
+  const reader = getActiveReader();
+  if (!reader) return { active: false };
+
+  await waitForReaderView(reader);
+  const attachment = Zotero.Items.get(reader.itemID) || await Zotero.Items.getAsync(reader.itemID);
+  if (!attachment) return { active: false };
+
+  const parentID = attachment.parentItemID || attachment.parentID;
+  const parent = parentID ? (Zotero.Items.get(parentID) || await Zotero.Items.getAsync(parentID)) : null;
+  const view = reader?._internalReader?._primaryView;
+  const type = reader.type || attachment.attachmentReaderType || null;
+  let page = null;
+  if (type === "pdf") {
+    try {
+      page = view?._iframeWindow?.PDFViewerApplication?.pdfViewer?.currentPageNumber || null;
+    }
+    catch (_) {
+      page = null;
+    }
+  }
+  return {
+    active: true,
+    type,
+    attachmentKey: attachment.key,
+    parentItemKey: parent?.key || null,
+    page: Number.isInteger(page) ? page : null,
+    editable: typeof attachment.isEditable === "function"
+      ? !!attachment.isEditable() && !attachment.deleted && !parent?.deleted
+      : false,
+    capabilities: readerCapabilities(view, type),
+  };
+}
+
 function parseBody(endpoint, requestData) {
   let body = endpoint._parseJSONBody(requestData.data);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new Error("Request body must be a JSON object");
   }
   return body;
+}
+
+function internalError(error, message = "Unexpected Zotero Modified Bridge error") {
+  Zotero.logError(error);
+  return errorResponse(500, "internal-error", message, true);
 }
 
 function coloredTags(libraryID) {
@@ -142,11 +272,185 @@ function stylesEndpointClass() {
   };
 }
 
+function contextEndpointClass() {
+  return class ModifiedContext extends Zotero.Server.LocalAPI.Settings {
+    supportedMethods = ["GET"];
+
+    async run(requestData) {
+      try {
+        const win = mainWindow();
+        const pane = win?.ZoteroPane;
+        let selectedCollections = [];
+        let selectedItems = [];
+        if (pane) {
+          if (typeof pane.getSelectedCollections === "function") {
+            selectedCollections = pane.getSelectedCollections(false) || [];
+          }
+          if (typeof pane.getSelectedItems === "function") {
+            selectedItems = pane.getSelectedItems(false, { libraryTabOnly: true }) || [];
+          }
+        }
+        const reader = await activeReaderRecord();
+        return jsonResponse(200, {
+          bridge: "zotero-modified-bridge",
+          version: bridgeVersion,
+          activeTab: {
+            id: win?.Zotero_Tabs?.selectedID || null,
+            type: win?.Zotero_Tabs?.selectedType || null,
+          },
+          library: {
+            selectedCollections: selectedCollections.map((collection) => ({
+              key: collection.key,
+              name: collection.name,
+              libraryID: collection.libraryID,
+            })),
+            selectedItems: selectedItems.slice(0, 200).map(itemRecord),
+          },
+          reader,
+        });
+      }
+      catch (error) {
+        return internalError(error);
+      }
+    }
+  };
+}
+
+function renderEndpointClass() {
+  return class ModifiedRender extends Zotero.Server.LocalAPI.Settings {
+    supportedMethods = ["POST"];
+
+    async run(requestData) {
+      try {
+        const body = parseBody(this, requestData);
+        if (!Array.isArray(body.itemKeys) || body.itemKeys.length < 1 || body.itemKeys.length > 100
+          || !body.itemKeys.every((key) => typeof key === "string" && key.trim())) {
+          return errorResponse(400, "invalid-item-keys", "itemKeys must contain 1–100 item keys");
+        }
+        if (typeof body.style !== "string" || !body.style.trim()) {
+          return errorResponse(400, "invalid-style", "style is required");
+        }
+        if (!["citation", "bibliography"].includes(body.mode)) {
+          return errorResponse(400, "invalid-mode", "mode must be citation or bibliography");
+        }
+        if (body.locale !== undefined && (typeof body.locale !== "string"
+          || !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(body.locale))) {
+          return errorResponse(400, "invalid-locale", "locale must be a BCP-47-like value");
+        }
+
+        const styleID = body.style.trim();
+        const style = Zotero.Styles.get(styleID, true);
+        if (!style) return errorResponse(404, "style-not-found", "The requested CSL style is not installed.");
+
+        const items = [];
+        for (let key of body.itemKeys) {
+          const item = await itemByKey(requestData.libraryID, key);
+          if (!item) return errorResponse(404, "item-not-found", `Item '${key}' was not found.`);
+          if (item.isNote?.()) {
+            return errorResponse(422, "item-not-renderable", `Item '${key}' is a note.`);
+          }
+          items.push(item);
+        }
+
+        const format = {
+          mode: "bibliography",
+          contentType: "",
+          id: styleID,
+          locale: body.locale || "",
+        };
+        const result = Zotero.QuickCopy.getContentFromItems(
+          items,
+          format,
+          null,
+          body.mode === "citation"
+        );
+        if (!result || typeof result !== "object") {
+          return errorResponse(422, "render-unavailable", "Zotero could not render these items.", true);
+        }
+        return jsonResponse(200, {
+          mode: body.mode,
+          style: styleID,
+          itemKeys: body.itemKeys.map((key) => key.trim()),
+          text: result.text || "",
+          html: result.html || "",
+        });
+      }
+      catch (error) {
+        return internalError(error, "Zotero could not render the requested items.");
+      }
+    }
+  };
+}
+
+function navigateEndpointClass() {
+  return class ModifiedNavigate extends Zotero.Server.LocalAPI.Settings {
+    supportedMethods = ["POST"];
+
+    async run(requestData) {
+      try {
+        const body = parseBody(this, requestData);
+        if (!["reveal-item", "open-attachment", "open-annotation"].includes(body.action)) {
+          return errorResponse(400, "invalid-action", "action must be reveal-item, open-attachment, or open-annotation");
+        }
+        if (typeof body.itemKey !== "string" || !body.itemKey.trim()) {
+          return errorResponse(400, "invalid-item-key", "itemKey is required");
+        }
+        const itemKey = body.itemKey.trim();
+        const item = await itemByKey(requestData.libraryID, itemKey);
+        if (!item) return errorResponse(404, "item-not-found", `Item '${itemKey}' was not found.`);
+
+        if (body.action === "reveal-item") {
+          const pane = mainWindow()?.ZoteroPane;
+          if (typeof pane?.selectItem !== "function") {
+            return errorResponse(501, "capability-unavailable", "Zotero item selection is unavailable.", true);
+          }
+          await pane.selectItem(item.id);
+        }
+        else if (body.action === "open-attachment") {
+          if (!item.isAttachment?.()) {
+            return errorResponse(422, "invalid-item-type", "open-attachment requires an attachment item.");
+          }
+          if (typeof Zotero.Reader?.open !== "function") {
+            return errorResponse(501, "capability-unavailable", "Zotero Reader is unavailable.", true);
+          }
+          await Zotero.Reader.open(item.id);
+        }
+        else {
+          if (!item.isAnnotation?.()) {
+            return errorResponse(422, "invalid-item-type", "open-annotation requires an annotation item.");
+          }
+          const parentID = item.parentItemID || item.parentID;
+          const parent = parentID ? (Zotero.Items.get(parentID) || await Zotero.Items.getAsync(parentID)) : null;
+          if (!parent?.isAttachment?.()) {
+            return errorResponse(422, "invalid-annotation-parent", "The annotation parent attachment is unavailable.");
+          }
+          if (typeof Zotero.Reader?.open !== "function") {
+            return errorResponse(501, "capability-unavailable", "Zotero Reader is unavailable.", true);
+          }
+          await Zotero.Reader.open(parent.id, { annotationID: item.key });
+        }
+        return jsonResponse(200, {
+          ok: true,
+          action: body.action,
+          requested: itemKey,
+          opened: itemKey,
+        });
+      }
+      catch (error) {
+        return internalError(error, "Zotero could not perform the requested navigation.");
+      }
+    }
+  };
+}
+
 async function startup(data) {
   bridgeVersion = data && data.version ? String(data.version) : "unknown";
   await Zotero.initializationPromise;
   Zotero.Server.Endpoints[STATUS_ROUTE] = statusEndpointClass();
   Zotero.Server.Endpoints[STYLES_ROUTE] = stylesEndpointClass();
+  Zotero.Server.Endpoints[CONTEXT_ROUTE] = contextEndpointClass();
+  Zotero.Server.Endpoints[RENDER_ROUTE] = renderEndpointClass();
+  Zotero.Server.Endpoints[NAVIGATE_ROUTE] = navigateEndpointClass();
   Zotero.debug(`Zotero Modified Bridge ${bridgeVersion} started`);
 }
 
