@@ -3,12 +3,18 @@ const STYLES_ROUTE = "/api/users/:userID/zotero-modified/styles";
 const CONTEXT_ROUTE = "/api/users/:userID/zotero-modified/context";
 const RENDER_ROUTE = "/api/users/:userID/zotero-modified/render";
 const NAVIGATE_ROUTE = "/api/users/:userID/zotero-modified/navigate";
+const DOCUMENT_SEGMENTS_ROUTE = "/api/users/:userID/zotero-modified/document-segments";
+const ANNOTATIONS_ROUTE = "/api/users/:userID/zotero-modified/annotations";
+const ANNOTATION_NOTE_ROUTE = "/api/users/:userID/zotero-modified/annotations/note";
 const ROUTES = [
   STATUS_ROUTE,
   STYLES_ROUTE,
   CONTEXT_ROUTE,
   RENDER_ROUTE,
   NAVIGATE_ROUTE,
+  DOCUMENT_SEGMENTS_ROUTE,
+  ANNOTATIONS_ROUTE,
+  ANNOTATION_NOTE_ROUTE,
 ];
 let bridgeVersion = "unknown";
 
@@ -39,7 +45,8 @@ function normalizeStringArray(value, { max = 20, itemMax = 100 } = {}) {
   for (let entry of value) {
     if (typeof entry !== "string") return null;
     entry = entry.trim().normalize();
-    if (!entry || entry.length > itemMax || result.includes(entry)) return null;
+    if (!entry || entry.length > itemMax) return null;
+    if (result.includes(entry)) continue;
     result.push(entry);
   }
   return result;
@@ -462,6 +469,367 @@ function navigateEndpointClass() {
   };
 }
 
+function sdtChildren(node) {
+  if (Array.isArray(node)) return node;
+  for (let name of ["children", "content", "nodes", "blocks"]) {
+    if (Array.isArray(node?.[name])) return node[name];
+  }
+  return [];
+}
+
+function sdtText(node) {
+  if (typeof node === "string") return node;
+  if (typeof node?.text === "string" && !sdtChildren(node).length) return node.text;
+  if (typeof node?.value === "string" && !sdtChildren(node).length) return node.value;
+  return sdtChildren(node).map(sdtText).join("");
+}
+
+function collectSDTSpans(node, ref, spans) {
+  const children = sdtChildren(node);
+  const text = typeof node === "string"
+    ? node
+    : (!children.length && typeof node?.text === "string" ? node.text :
+      (!children.length && typeof node?.value === "string" ? node.value : null));
+  if (text === null) {
+    children.forEach((child, index) => collectSDTSpans(child, [...ref, index], spans));
+    return;
+  }
+  if (!text) return;
+  const textStart = spans.length ? spans[spans.length - 1].textEnd : 0;
+  spans.push({
+    textStart,
+    textEnd: textStart + text.length,
+    ref: ref.length ? ref : [0],
+    sourceStart: 0,
+    sourceEnd: text.length,
+  });
+}
+
+function materializedSDTSegments(document, includeAuxiliary = false) {
+  const content = Array.isArray(document?.content)
+    ? document.content
+    : (Array.isArray(document?.content?.blocks) ? document.content.blocks : []);
+  return content.flatMap((block, index) => {
+    if (!includeAuxiliary && (block?.auxiliary || block?.isAuxiliary)) return [];
+    const blockRef = Array.isArray(block?.ref) ? block.ref : [index];
+    const spans = [];
+    collectSDTSpans(block, blockRef, spans);
+    const text = sdtText(block);
+    if (!text || !spans.length) return [];
+    return [{
+      id: `block:${blockRef.join(".")}`,
+      blockType: block?.blockType || block?.type || "block",
+      flowClass: block?.flowClass || null,
+      text,
+      locator: { kind: "sdt-block", blockRef },
+      spans,
+    }];
+  });
+}
+
+// SDT is a binary pack in Zotero. Keep decoding behind feature detection so a
+// Zotero build without the bundled SDT reader returns a capability error.
+async function loadSDTDocument(attachment) {
+  if (typeof Zotero.SDT?.getPack !== "function") return null;
+  const pack = await Zotero.SDT.getPack(attachment.id, { isPriority: true });
+  if (!pack) return null;
+  if (pack.content && pack.metadata) return pack;
+
+  let reader = null;
+  if (typeof Zotero.SDT.getReader === "function") {
+    try {
+      reader = await Zotero.SDT.getReader(pack);
+    }
+    catch (_) {
+      reader = await Zotero.SDT.getReader(attachment.id);
+    }
+  }
+  else if (typeof Zotero.SDT.Reader === "function") {
+    reader = new Zotero.SDT.Reader(pack);
+  }
+  if (!reader) return null;
+  if (typeof reader.materialize === "function") return await reader.materialize();
+  return reader.document || reader;
+}
+
+async function activePDFAttachment(libraryID, attachmentKey) {
+  const reader = getActiveReader();
+  if (!reader) return { response: errorResponse(409, "reader-required", "An active Reader is required.", true) };
+  await waitForReaderView(reader);
+  const attachment = Zotero.Items.get(reader.itemID) || await Zotero.Items.getAsync(reader.itemID);
+  if (!attachment || attachment.libraryID !== libraryID || (attachmentKey && attachment.key !== attachmentKey)) {
+    return { response: errorResponse(409, "reader-mismatch", "The active Reader does not match the requested attachment.", true) };
+  }
+  if (reader.type !== "pdf") {
+    return { response: errorResponse(422, "unsupported-reader", "Annotation V1 requires an active PDF Reader.") };
+  }
+  return { reader, attachment, view: reader?._internalReader?._primaryView };
+}
+
+function documentSourceHash(document) {
+  return document?.metadata?.source?.hash || document?.metadata?.sourceHash || null;
+}
+
+function documentSegmentsEndpointClass() {
+  return class ModifiedDocumentSegments extends Zotero.Server.LocalAPI.Settings {
+    supportedMethods = ["GET"];
+
+    async run(requestData) {
+      try {
+        const query = requestData.searchParams;
+        const limit = Number(query.get("limit") || 100);
+        const cursor = Number(query.get("cursor") || 0);
+        const includeAuxiliary = query.get("includeAuxiliary") === "1";
+        if (!Number.isInteger(limit) || limit < 1 || limit > 500
+          || !Number.isInteger(cursor) || cursor < 0) {
+          return errorResponse(400, "invalid-pagination", "limit must be 1–500 and cursor must be a non-negative integer");
+        }
+
+        const active = await activePDFAttachment(requestData.libraryID, query.get("attachmentKey"));
+        if (active.response) return active.response;
+        const document = await loadSDTDocument(active.attachment);
+        if (!document) {
+          return errorResponse(501, "sdt-unavailable", "Structured Document Text is unavailable in this Zotero build.", true);
+        }
+        const allSegments = materializedSDTSegments(document, includeAuxiliary);
+        const segments = allSegments.slice(cursor, cursor + limit);
+        const next = cursor + segments.length < allSegments.length ? String(cursor + segments.length) : null;
+        return jsonResponse(200, {
+          attachment: { key: active.attachment.key, libraryID: active.attachment.libraryID },
+          document: {
+            sourceHash: documentSourceHash(document),
+            schemaVersion: document.schemaVersion || null,
+            processorType: document.metadata?.processor?.type || active.reader.type,
+          },
+          segments,
+          nextCursor: next,
+        });
+      }
+      catch (error) {
+        return internalError(error, "Zotero could not read the document segments.");
+      }
+    }
+  };
+}
+
+function annotationRecord(annotation, attachmentKey) {
+  let json;
+  try {
+    json = Zotero.Annotations.toJSONSync(annotation);
+  }
+  catch (_) {
+    json = {};
+  }
+  return {
+    key: json.key || annotation.key,
+    attachmentKey,
+    type: json.type || annotation.annotationType,
+    text: json.text || annotation.annotationText || "",
+    comment: json.comment || annotation.annotationComment || "",
+    color: json.color || annotation.annotationColor || null,
+    pageLabel: json.pageLabel || annotation.annotationPageLabel || null,
+    sortIndex: json.sortIndex || annotation.annotationSortIndex || null,
+    position: json.position || null,
+  };
+}
+
+function annotationJSON(annotation) {
+  try {
+    return Zotero.Annotations.toJSONSync(annotation);
+  }
+  catch (_) {
+    return {
+      key: annotation.key,
+      type: annotation.annotationType,
+      text: annotation.annotationText || "",
+      position: annotation.annotationPosition ? JSON.parse(annotation.annotationPosition) : null,
+    };
+  }
+}
+
+function findExactAnnotation(attachment, type, text, comment, color) {
+  return attachment.getAnnotations().find((annotation) => {
+    if (annotation.annotationType !== type) return false;
+    const json = annotationJSON(annotation);
+    return (json.text || "").normalize() === text.normalize()
+      && (json.comment || "") === comment
+      && (!color || json.color === color);
+  }) || null;
+}
+
+function sdtAnchorForRange(segment, start, end) {
+  function refFor(offset, ending) {
+    for (let span of segment.spans) {
+      if (offset < span.textEnd || (ending && offset === span.textEnd)) {
+        return [...span.ref, span.sourceStart + offset - span.textStart];
+      }
+    }
+    const last = segment.spans[segment.spans.length - 1];
+    return [...last.ref, last.sourceEnd];
+  }
+  return { start: refFor(start, false), end: refFor(end, true) };
+}
+
+function annotationsEndpointClass() {
+  return class ModifiedAnnotations extends Zotero.Server.LocalAPI.Settings {
+    supportedMethods = ["POST"];
+
+    async run(requestData) {
+      try {
+        const body = parseBody(this, requestData);
+        const attachmentKey = body.attachmentKey;
+        if (typeof attachmentKey !== "string" || !attachmentKey.trim()) {
+          return errorResponse(400, "invalid-attachment-key", "attachmentKey is required");
+        }
+        const type = body.type;
+        if (!["highlight", "underline"].includes(type)) {
+          return errorResponse(400, "invalid-annotation-type", "type must be highlight or underline");
+        }
+        const color = body.color || "#ffd400";
+        if (!validateHexColor(color)) return errorResponse(400, "invalid-color", "color must use #RRGGBB syntax");
+        const comment = body.comment === undefined ? "" : body.comment;
+        if (typeof comment !== "string" || comment.length > 4000) {
+          return errorResponse(400, "invalid-comment", "comment must be at most 4000 characters");
+        }
+        const tags = body.tags === undefined ? [] : normalizeStringArray(body.tags);
+        if (!tags) return errorResponse(400, "invalid-tags", "tags must contain at most 20 unique strings of 100 characters");
+
+        const active = await activePDFAttachment(requestData.libraryID, attachmentKey.trim());
+        if (active.response) return active.response;
+        if (typeof active.view?.createAnnotationFromSDT !== "function") {
+          return errorResponse(501, "annotation-unavailable", "Native SDT annotation creation is unavailable in this Zotero build.", true);
+        }
+        if (typeof active.attachment.isEditable !== "function"
+          || !active.attachment.isEditable() || active.attachment.deleted) {
+          return errorResponse(423, "library-read-only", "The active attachment or library is read-only.", true);
+        }
+
+        let sdtAnchor;
+        let text = "";
+        if (body.target?.kind === "sdt") {
+          if (!Array.isArray(body.target.start) || !Array.isArray(body.target.end)
+            || !body.target.start.length || !body.target.end.length) {
+            return errorResponse(400, "invalid-sdt-target", "raw SDT targets require start and end RefPaths");
+          }
+          sdtAnchor = { start: body.target.start, end: body.target.end };
+        }
+        else {
+          const target = body.target;
+          if (!target || typeof target.segmentId !== "string"
+            || !Number.isInteger(target.start) || !Number.isInteger(target.end)
+            || target.start < 0 || target.end <= target.start) {
+            return errorResponse(400, "invalid-target", "target must contain segmentId and a non-empty [start,end) range");
+          }
+          const document = await loadSDTDocument(active.attachment);
+          if (!document) return errorResponse(501, "sdt-unavailable", "Structured Document Text is unavailable in this Zotero build.", true);
+          if (typeof body.sourceHash !== "string" || !body.sourceHash
+            || body.sourceHash !== documentSourceHash(document)) {
+            return errorResponse(412, "document-changed", "The document changed; refetch segments and relocate the target.", true);
+          }
+          const segment = materializedSDTSegments(document).find((entry) => entry.id === target.segmentId);
+          if (!segment) return errorResponse(404, "segment-not-found", "The requested document segment was not found.");
+          if (target.end > segment.text.length) return errorResponse(400, "invalid-target", "target end exceeds segment text length");
+          text = segment.text.slice(target.start, target.end);
+          sdtAnchor = sdtAnchorForRange(segment, target.start, target.end);
+        }
+
+        const duplicate = text ? findExactAnnotation(active.attachment, type, text, comment, color) : null;
+        if (duplicate) {
+          return jsonResponse(200, {
+            created: false,
+            duplicate: true,
+            annotation: annotationRecord(duplicate, active.attachment.key),
+          });
+        }
+
+        const payload = { sdtAnchor, type, color, comment, tags };
+        const iframeWindow = active.view?._iframeWindow;
+        if (!iframeWindow || typeof Components === "undefined"
+          || typeof Components.utils?.cloneInto !== "function") {
+          return errorResponse(501, "reader-bridge-unavailable", "The active Reader iframe is unavailable.", true);
+        }
+        const created = await active.view.createAnnotationFromSDT(
+          Components.utils.cloneInto(payload, iframeWindow)
+        );
+        const createdKey = created?.id || created?.key || null;
+        const annotation = active.attachment.getAnnotations().find((item) => item.key === createdKey)
+          || (text ? findExactAnnotation(active.attachment, type, text, comment, color) : null);
+        if (!annotation) {
+          return errorResponse(500, "annotation-readback-failed", "Zotero did not expose the created annotation after the native write.", true);
+        }
+        return jsonResponse(200, {
+          created: true,
+          annotation: annotationRecord(annotation, active.attachment.key),
+        });
+      }
+      catch (error) {
+        return internalError(error, "Zotero could not create the native annotation.");
+      }
+    }
+  };
+}
+
+function annotationNoteEndpointClass() {
+  return class ModifiedAnnotationNote extends Zotero.Server.LocalAPI.Settings {
+    supportedMethods = ["POST"];
+
+    async run(requestData) {
+      try {
+        const body = parseBody(this, requestData);
+        if (!Array.isArray(body.annotationKeys) || body.annotationKeys.length < 1 || body.annotationKeys.length > 50
+          || !body.annotationKeys.every((key) => typeof key === "string" && key.trim())) {
+          return errorResponse(400, "invalid-annotation-keys", "annotationKeys must contain 1–50 annotation keys");
+        }
+        if (typeof body.parentItemKey !== "string" || !body.parentItemKey.trim()) {
+          return errorResponse(400, "invalid-parent-item-key", "parentItemKey is required");
+        }
+        const order = body.order || "document";
+        if (!["document", "provided"].includes(order)) {
+          return errorResponse(400, "invalid-order", "order must be document or provided");
+        }
+        const parent = await itemByKey(requestData.libraryID, body.parentItemKey);
+        if (!parent) return errorResponse(404, "item-not-found", "The requested parent item was not found.");
+        if (!parent.isRegularItem?.() || !parent.isTopLevelItem?.()) {
+          return errorResponse(422, "invalid-parent-item", "parentItemKey must identify a top-level regular item.");
+        }
+        const annotations = [];
+        for (let key of body.annotationKeys) {
+          const annotation = await itemByKey(requestData.libraryID, key);
+          if (!annotation) return errorResponse(404, "annotation-not-found", `Annotation '${key}' was not found.`);
+          if (!annotation.isAnnotation?.()) return errorResponse(422, "invalid-annotation", `Item '${key}' is not an annotation.`);
+          const annotationParentID = annotation.parentItemID || annotation.parentID;
+          const attachment = annotationParentID
+            ? (Zotero.Items.get(annotationParentID) || await Zotero.Items.getAsync(annotationParentID))
+            : null;
+          if (!attachment?.isAttachment?.() || attachment.parentItemID !== parent.id) {
+            return errorResponse(422, "mixed-parent-annotations", "All annotations must belong to the requested parent item.");
+          }
+          annotations.push(annotation);
+        }
+        if (order === "document") {
+          annotations.sort((a, b) => String(a.annotationSortIndex || "").localeCompare(String(b.annotationSortIndex || "")));
+        }
+        if (typeof Zotero.EditorInstance?.createNoteFromAnnotations !== "function") {
+          return errorResponse(501, "annotation-note-unavailable", "Native annotation-note creation is unavailable.", true);
+        }
+        const note = await Zotero.EditorInstance.createNoteFromAnnotations(annotations, {
+          parentID: parent.id,
+          noComments: !!body.noComments,
+          noHeader: !!body.noHeader,
+        });
+        return jsonResponse(200, {
+          created: true,
+          note: { key: note.key, parentItemKey: parent.key },
+          annotationKeys: annotations.map((annotation) => annotation.key),
+        });
+      }
+      catch (error) {
+        return internalError(error, "Zotero could not create the annotation note.");
+      }
+    }
+  };
+}
+
 async function startup(data) {
   bridgeVersion = data && data.version ? String(data.version) : "unknown";
   await Zotero.initializationPromise;
@@ -470,6 +838,9 @@ async function startup(data) {
   Zotero.Server.Endpoints[CONTEXT_ROUTE] = contextEndpointClass();
   Zotero.Server.Endpoints[RENDER_ROUTE] = renderEndpointClass();
   Zotero.Server.Endpoints[NAVIGATE_ROUTE] = navigateEndpointClass();
+  Zotero.Server.Endpoints[DOCUMENT_SEGMENTS_ROUTE] = documentSegmentsEndpointClass();
+  Zotero.Server.Endpoints[ANNOTATIONS_ROUTE] = annotationsEndpointClass();
+  Zotero.Server.Endpoints[ANNOTATION_NOTE_ROUTE] = annotationNoteEndpointClass();
   Zotero.debug(`Zotero Modified Bridge ${bridgeVersion} started`);
 }
 
