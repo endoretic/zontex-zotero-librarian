@@ -38,6 +38,9 @@ WRITE_TIMEOUT = 180.0
 MAX_BATCH = 50
 MODIFIED_STATUS_PATH = f"{LOCAL_USER}/zotero-modified/statuses"
 MODIFIED_STYLES_PATH = f"{LOCAL_USER}/zotero-modified/styles"
+MODIFIED_CONTEXT_PATH = f"{LOCAL_USER}/zotero-modified/context"
+MODIFIED_RENDER_PATH = f"{LOCAL_USER}/zotero-modified/render"
+MODIFIED_NAVIGATE_PATH = f"{LOCAL_USER}/zotero-modified/navigate"
 STATUS_PREFIX = "/"
 RATE_LINE_RE = re.compile(r"^\s*rate\s*:\s*([1-5])\s*$", re.IGNORECASE)
 CSL_NAMESPACE = "http://purl.org/net/xbiblio/csl"
@@ -147,6 +150,18 @@ def api_get(path: str) -> Any:
 def api_get_response(path: str) -> Response:
     api_path = path if path.startswith("/api") else "/api" + path
     return require_ok(request(api_path), f"GET {api_path}")
+
+
+def bridge_post(path: str, data: dict[str, Any], action: str) -> Any:
+    require_companion()
+    response = require_ok(
+        authorized_request(path, method="POST", data=data),
+        action,
+    )
+    payload = parse_body(response)
+    if payload is None:
+        exit_with(f"{action} returned an empty response")
+    return payload
 
 
 def library_version() -> int:
@@ -1146,6 +1161,41 @@ def cmd_list_styles(_: argparse.Namespace) -> None:
     dump_json(api_get(MODIFIED_STYLES_PATH))
 
 
+def cmd_context(_: argparse.Namespace) -> None:
+    require_companion()
+    dump_json(api_get(MODIFIED_CONTEXT_PATH))
+
+
+def cmd_render(args: argparse.Namespace) -> None:
+    payload = bridge_post(
+        MODIFIED_RENDER_PATH,
+        {
+            "itemKeys": args.item_key,
+            "style": args.style,
+            "locale": args.locale or "",
+            "mode": args.mode,
+        },
+        "POST Bridge render",
+    )
+    dump_json(payload)
+
+
+def cmd_navigate(args: argparse.Namespace) -> None:
+    selected = [
+        ("reveal-item", args.reveal_item),
+        ("open-attachment", args.open_attachment),
+        ("open-annotation", args.open_annotation),
+    ]
+    action, item_key = next((action, key) for action, key in selected if key)
+    dump_json(
+        bridge_post(
+            MODIFIED_NAVIGATE_PATH,
+            {"action": action, "itemKey": item_key},
+            f"POST Bridge navigate ({action})",
+        )
+    )
+
+
 def cmd_install_csl(args: argparse.Namespace) -> None:
     csl = Path(args.file).read_text(encoding="utf-8")
     metadata = find_csl_metadata(csl)
@@ -1379,6 +1429,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     styles = commands.add_parser("styles", help="List installed CSL styles")
     styles.set_defaults(func=cmd_list_styles)
+
+    context = commands.add_parser("context", help="Read the current Zotero UI/Reader context")
+    context.set_defaults(func=cmd_context)
+
+    render = commands.add_parser("render", help="Preview native Zotero CSL output")
+    render.add_argument("--item-key", action="append", required=True)
+    render.add_argument("--style", required=True)
+    render.add_argument("--locale")
+    render.add_argument("--mode", choices=["citation", "bibliography"], default="bibliography")
+    render.set_defaults(func=cmd_render)
+
+    navigate = commands.add_parser("navigate", help="Perform a Zotero UI navigation action")
+    navigation = navigate.add_mutually_exclusive_group(required=True)
+    navigation.add_argument("--reveal-item")
+    navigation.add_argument("--open-attachment")
+    navigation.add_argument("--open-annotation")
+    navigate.set_defaults(func=cmd_navigate)
 
     install_csl = commands.add_parser("install-csl", help="Validate, preview, and install a CSL file")
     install_csl.add_argument("--file", required=True)

@@ -150,6 +150,70 @@ class ZoteroManagerTests(unittest.TestCase):
         self.assertEqual(args.item_key, ["ABCD2345"])
         args = parser.parse_args(["clear-status", "--collection-name", "BN5001"])
         self.assertIsNone(args.name)
+        args = parser.parse_args([
+            "render",
+            "--item-key",
+            "ABCD2345",
+            "--style",
+            "http://www.zotero.org/styles/apa",
+            "--mode",
+            "citation",
+        ])
+        self.assertEqual(args.item_key, ["ABCD2345"])
+        self.assertEqual(args.mode, "citation")
+        args = parser.parse_args(["navigate", "--open-attachment", "PDF12345"])
+        self.assertEqual(args.open_attachment, "PDF12345")
+
+    @mock.patch.object(zm, "api_get")
+    @mock.patch.object(zm, "require_companion")
+    def test_context_prints_bridge_payload(self, require_companion, api_get):
+        api_get.return_value = {"reader": {"active": False}}
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zm.cmd_context(argparse.Namespace())
+        require_companion.assert_called_once_with()
+        api_get.assert_called_once_with(zm.MODIFIED_CONTEXT_PATH)
+        self.assertFalse(json.loads(output.getvalue())["reader"]["active"])
+
+    @mock.patch.object(zm, "bridge_post")
+    def test_render_sends_native_preview_request(self, bridge_post):
+        bridge_post.return_value = {"mode": "bibliography", "text": "Example"}
+        args = argparse.Namespace(
+            item_key=["ABCD2345"],
+            style="http://www.zotero.org/styles/apa",
+            locale=None,
+            mode="bibliography",
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zm.cmd_render(args)
+        bridge_post.assert_called_once_with(
+            zm.MODIFIED_RENDER_PATH,
+            {
+                "itemKeys": ["ABCD2345"],
+                "style": "http://www.zotero.org/styles/apa",
+                "locale": "",
+                "mode": "bibliography",
+            },
+            "POST Bridge render",
+        )
+        self.assertEqual(json.loads(output.getvalue())["text"], "Example")
+
+    @mock.patch.object(zm, "bridge_post")
+    def test_navigate_sends_only_the_selected_action(self, bridge_post):
+        bridge_post.return_value = {"ok": True}
+        args = argparse.Namespace(
+            reveal_item=None,
+            open_attachment="PDF12345",
+            open_annotation=None,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            zm.cmd_navigate(args)
+        bridge_post.assert_called_once_with(
+            zm.MODIFIED_NAVIGATE_PATH,
+            {"action": "open-attachment", "itemKey": "PDF12345"},
+            "POST Bridge navigate (open-attachment)",
+        )
 
     def test_invalid_field_is_rejected_before_write(self):
         data = {

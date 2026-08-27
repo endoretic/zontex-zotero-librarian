@@ -36,6 +36,13 @@ The script stores the local write key in the current Windows user's local applic
 
 The colored-tag/status and CSL commands require the separately installed Zotero Modified Bridge XPI. Basic collection/item CRUD uses Zotero 10's stock authorized local API.
 
+## Zotero Modified Bridge vNext
+
+- Resolve any current/selected/open Zotero referent with `context` first; do not infer it from conversation history. It reports library-tab selection separately from the active Reader.
+- `render` is a read-only native Zotero CSL preview. Use it after `install-csl` when iterating on citation or bibliography output.
+- `navigate` is a non-persistent UI side effect for revealing an item or opening an attachment/annotation. It must use explicit keys and does not claim visual readback beyond the requested target.
+- The Bridge remains a thin privileged layer: ordinary item/collection/tag/note CRUD stays on the stock Local API, and no generic execution endpoint or Reader UI hook is allowed.
+
 ## Release updates
 
 - When a user asks to check for updates, run `python scripts/update_release.py` and report its JSON preview. It must not change files.
