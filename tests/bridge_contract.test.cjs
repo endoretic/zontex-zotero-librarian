@@ -528,4 +528,96 @@ test("annotation-note rejects duplicate keys and a read-only parent", async () =
   assert.equal(responseBody(readOnly).error, "library-read-only");
 });
 
+test("tag impact ignores a same-named tag that exists only in another library", async () => {
+  const { api } = loadBridge({
+    Zotero: {
+      Tags: {
+        getID: () => 9,
+        getTagItems: async () => [],
+        getColors: () => new Map(),
+      },
+    },
+  });
+  const impact = await api.tagImpact(1, "Elsewhere");
+  assert.equal(impact.tagID, 9);
+  assert.equal(impact.exists, false);
+  assert.equal(impact.itemIDs.length, 0);
+});
+
+test("tag rename preserves an existing uncolored target", async () => {
+  const calls = [];
+  const ids = { Legacy: 1, Current: 2 };
+  const { api } = loadBridge({
+    Zotero: {
+      Tags: {
+        getID: (name) => ids[name] || null,
+        getTagItems: async (_libraryID, id) => id === 1 ? [10] : [20],
+        getColors: () => new Map(),
+        rename: async (...args) => calls.push(["rename", ...args]),
+        setColor: async (...args) => calls.push(["setColor", ...args]),
+      },
+    },
+  });
+  const result = await endpoint(api.tagRenameEndpointClass(), {
+    from: "Legacy", to: "Current", expectedCount: 1,
+  });
+  assert.equal(result[0], 200);
+  assert.equal(responseBody(result).targetExisted, true);
+  assert.deepEqual(calls, [
+    ["rename", 1, "Legacy", "Current"],
+    ["setColor", 1, "Current", false],
+  ]);
+});
+
+test("tag rename rejects a stale impact count before mutation", async () => {
+  let renamed = false;
+  const { api } = loadBridge({
+    Zotero: {
+      Tags: {
+        getID: () => 1,
+        getTagItems: async () => [10, 20],
+        getColors: () => new Map(),
+        rename: async () => { renamed = true; },
+      },
+    },
+  });
+  const result = await endpoint(api.tagRenameEndpointClass(), {
+    from: "Legacy", to: "Current", expectedCount: 1,
+  });
+  assert.equal(result[0], 412);
+  assert.equal(responseBody(result).error, "tag-impact-changed");
+  assert.equal(renamed, false);
+});
+
+test("tag merge uses the first colored source only when the target is absent", async () => {
+  const calls = [];
+  const ids = { Legacy: 1, Old: 2 };
+  const colors = new Map([["Legacy", { color: "#FF0000", position: 3 }]]);
+  const { api } = loadBridge({
+    Zotero: {
+      Tags: {
+        getID: (name) => ids[name] || null,
+        getTagItems: async (_libraryID, id) => id ? [id * 10] : [],
+        getColors: () => colors,
+        rename: async (...args) => calls.push(["rename", ...args]),
+        setColor: async (...args) => calls.push(["setColor", ...args]),
+      },
+    },
+  });
+  const result = await endpoint(api.tagMergeEndpointClass(), {
+    into: "Current",
+    sources: [
+      { name: "Legacy", expectedCount: 1 },
+      { name: "Old", expectedCount: 1 },
+    ],
+    colorPolicy: "preserve-target",
+  });
+  assert.equal(result[0], 200);
+  assert.equal(responseBody(result).targetExisted, false);
+  assert.deepEqual(calls.filter(([name]) => name === "setColor"), [
+    ["setColor", 1, "Current", "#FF0000", 3],
+    ["setColor", 1, "Current", "#FF0000", 3],
+  ]);
+});
+
 module.exports = { endpoint, loadBridge, makeItem, responseBody };

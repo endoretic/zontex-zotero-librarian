@@ -44,6 +44,8 @@ MODIFIED_NAVIGATE_PATH = f"{LOCAL_USER}/zotero-modified/navigate"
 MODIFIED_DOCUMENT_SEGMENTS_PATH = f"{LOCAL_USER}/zotero-modified/document-segments"
 MODIFIED_ANNOTATIONS_PATH = f"{LOCAL_USER}/zotero-modified/annotations"
 MODIFIED_ANNOTATION_NOTE_PATH = f"{LOCAL_USER}/zotero-modified/annotations/note"
+MODIFIED_TAG_RENAME_PATH = f"{LOCAL_USER}/zotero-modified/tags/rename"
+MODIFIED_TAG_MERGE_PATH = f"{LOCAL_USER}/zotero-modified/tags/merge"
 STATUS_PREFIX = "/"
 RATE_LINE_RE = re.compile(r"^\s*rate\s*:\s*([1-5])\s*$", re.IGNORECASE)
 CSL_NAMESPACE = "http://purl.org/net/xbiblio/csl"
@@ -1249,6 +1251,151 @@ def cmd_annotations_to_note(args: argparse.Namespace) -> None:
     dump_json(preview)
 
 
+def colored_tag_map() -> dict[str, dict[str, Any]]:
+    body = api_get(MODIFIED_STATUS_PATH)
+    rows = body.get("coloredTags", []) if isinstance(body, dict) else []
+    return {
+        str(row["name"]): {
+            "color": row.get("color"),
+            "position": row.get("position"),
+        }
+        for row in rows
+        if isinstance(row, dict) and row.get("name")
+    }
+
+
+def tag_item_count(name: str) -> int:
+    query = urllib.parse.urlencode({"tag": name, "limit": 1})
+    response = api_get_response(f"{LOCAL_USER}/items?{query}")
+    raw = header(response.headers, "Total-Results")
+    if raw is None or not raw.isdigit():
+        exit_with(f"Zotero did not report the impact count for tag: {name}")
+    return int(raw)
+
+
+def tag_item_keys(name: str) -> list[str]:
+    keys: list[str] = []
+    start = 0
+    while True:
+        query = urllib.parse.urlencode(
+            {"tag": name, "format": "keys", "limit": 100, "start": start}
+        )
+        response = api_get_response(f"{LOCAL_USER}/items?{query}")
+        raw_total = header(response.headers, "Total-Results")
+        if raw_total is None or not raw_total.isdigit():
+            exit_with(f"Zotero did not report the impact count for tag: {name}")
+        total = int(raw_total)
+        page = [line.strip() for line in response.text.splitlines() if line.strip()]
+        keys.extend(page)
+        if len(keys) >= total:
+            return keys
+        if not page:
+            exit_with(f"Zotero returned an incomplete item-key list for tag: {name}")
+        start += len(page)
+
+
+def parse_counted_tag(raw: str, *, label: str = "--source") -> dict[str, Any]:
+    if not isinstance(raw, str) or "=" not in raw:
+        exit_with(f"{label} must use TAG=EXPECTED_COUNT")
+    name, raw_count = raw.rsplit("=", 1)
+    name = name.strip()
+    try:
+        count = int(raw_count)
+    except ValueError:
+        exit_with(f"{label} expected count must be a non-negative integer")
+    if not name or count < 0:
+        exit_with(f"{label} must use a non-empty tag and non-negative expected count")
+    return {"name": name, "expectedCount": count}
+
+
+def cmd_rename_tag(args: argparse.Namespace) -> None:
+    source = args.from_name.strip()
+    target = args.to_name.strip()
+    if not source or not target or source == target:
+        exit_with("--from and --to must be distinct non-empty tag names")
+    if args.expect_count < 0:
+        exit_with("--expect-count must be non-negative")
+    colors = colored_tag_map()
+    source_count = tag_item_count(source)
+    target_count = tag_item_count(target)
+    preview = {
+        "action": "rename-tag",
+        "from": source,
+        "to": target,
+        "expectedCount": args.expect_count,
+        "sourceColor": colors.get(source),
+        "targetColor": colors.get(target),
+        "sourceExists": source_count > 0 or source in colors,
+        "targetExists": target_count > 0 or target in colors,
+        "actualCount": source_count,
+        "countMatches": source_count == args.expect_count,
+        "colorPolicy": "preserve-target",
+        "committed": False,
+    }
+    if not args.yes:
+        dump_json(preview)
+        return
+    preview.update(
+        {
+            "committed": True,
+            "response": bridge_post(
+                MODIFIED_TAG_RENAME_PATH,
+                {"from": source, "to": target, "expectedCount": args.expect_count},
+                "POST Bridge tag rename",
+            ),
+        }
+    )
+    dump_json(preview)
+
+
+def cmd_merge_tags(args: argparse.Namespace) -> None:
+    sources = [parse_counted_tag(raw) for raw in args.source]
+    target = args.into.strip()
+    if not target:
+        exit_with("--into must be a non-empty tag name")
+    names = [source["name"] for source in sources]
+    if target in names or len(set(names)) != len(names):
+        exit_with("--source names must be unique and must not equal --into")
+    colors = colored_tag_map()
+    source_keys = {name: set(tag_item_keys(name)) for name in names}
+    actual_counts = {name: len(source_keys[name]) for name in names}
+    target_count = tag_item_count(target)
+    affected_keys = set().union(*source_keys.values())
+    preview = {
+        "action": "merge-tags",
+        "from": [
+            {
+                **source,
+                "actualCount": actual_counts[source["name"]],
+                "countMatches": actual_counts[source["name"]] == source["expectedCount"],
+                "exists": actual_counts[source["name"]] > 0 or source["name"] in colors,
+                "color": colors.get(source["name"]),
+            }
+            for source in sources
+        ],
+        "into": target,
+        "targetColor": colors.get(target),
+        "targetExists": target_count > 0 or target in colors,
+        "uniqueAffectedItems": len(affected_keys),
+        "colorPolicy": args.color_policy,
+        "committed": False,
+    }
+    if not args.yes:
+        dump_json(preview)
+        return
+    preview.update(
+        {
+            "committed": True,
+            "response": bridge_post(
+                MODIFIED_TAG_MERGE_PATH,
+                {"sources": sources, "into": target, "colorPolicy": args.color_policy},
+                "POST Bridge tag merge",
+            ),
+        }
+    )
+    dump_json(preview)
+
+
 def cmd_install_csl(args: argparse.Namespace) -> None:
     csl = Path(args.file).read_text(encoding="utf-8")
     metadata = find_csl_metadata(csl)
@@ -1418,6 +1565,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     colored_tags = commands.add_parser("colored-tags", help="List Zotero colored tags")
     colored_tags.set_defaults(func=cmd_list_colored_tags)
+
+    rename_tag = commands.add_parser(
+        "rename-tag", help="Preview or natively rename one tag with an expected impact count"
+    )
+    rename_tag.add_argument("--from", dest="from_name", required=True)
+    rename_tag.add_argument("--to", dest="to_name", required=True)
+    rename_tag.add_argument("--expect-count", type=int, required=True)
+    rename_tag.add_argument("--yes", action="store_true")
+    rename_tag.set_defaults(func=cmd_rename_tag)
+
+    merge_tags = commands.add_parser(
+        "merge-tags", help="Preview or natively merge tags with expected impact counts"
+    )
+    merge_tags.add_argument(
+        "--source", action="append", required=True, metavar="TAG=EXPECTED_COUNT"
+    )
+    merge_tags.add_argument("--into", required=True)
+    merge_tags.add_argument(
+        "--color-policy", choices=["preserve-target"], default="preserve-target"
+    )
+    merge_tags.add_argument("--yes", action="store_true")
+    merge_tags.set_defaults(func=cmd_merge_tags)
 
     set_colored_tag = commands.add_parser(
         "set-colored-tag", help="Preview or assign one native Zotero tag color"

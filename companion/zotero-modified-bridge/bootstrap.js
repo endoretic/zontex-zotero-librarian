@@ -8,6 +8,8 @@ const ANNOTATIONS_ROUTE = "/api/users/:userID/zotero-modified/annotations";
 const ANNOTATION_NOTE_ROUTE = "/api/users/:userID/zotero-modified/annotations/note";
 const TESTED_ZOTERO_VERSION = "10.0.1";
 const PRIVATE_ANNOTATION_BACKEND = "private-reader-internals";
+const TAG_RENAME_ROUTE = "/api/users/:userID/zotero-modified/tags/rename";
+const TAG_MERGE_ROUTE = "/api/users/:userID/zotero-modified/tags/merge";
 const ROUTES = [
   STATUS_ROUTE,
   STYLES_ROUTE,
@@ -17,6 +19,8 @@ const ROUTES = [
   DOCUMENT_SEGMENTS_ROUTE,
   ANNOTATIONS_ROUTE,
   ANNOTATION_NOTE_ROUTE,
+  TAG_RENAME_ROUTE,
+  TAG_MERGE_ROUTE,
 ];
 let bridgeVersion = "unknown";
 const reportedCompatibilityWarnings = new Set();
@@ -252,6 +256,175 @@ function coloredTags(libraryID) {
     color: value.color,
     position: value.position,
   })).sort((a, b) => a.position - b.position);
+}
+
+function normalizedTagName(value) {
+  return typeof value === "string" ? value.trim().normalize() : "";
+}
+
+function tagColor(libraryID, name) {
+  const value = Zotero.Tags.getColors(libraryID).get(name);
+  return value ? { color: value.color, position: value.position } : null;
+}
+
+async function tagImpact(libraryID, name) {
+  const tagID = Zotero.Tags.getID(name);
+  const color = tagColor(libraryID, name);
+  const itemIDs = tagID ? await Zotero.Tags.getTagItems(libraryID, tagID) : [];
+  return {
+    tagID: tagID || null,
+    itemIDs,
+    color,
+    exists: itemIDs.length > 0 || !!color,
+  };
+}
+
+function editableLibrary(libraryID) {
+  const library = Zotero.Libraries.get(libraryID);
+  return library && library.editable !== false;
+}
+
+function expectedCount(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function tagCountMismatch(name, expected, actual) {
+  return errorResponse(
+    412,
+    "tag-impact-changed",
+    `Tag '${name}' affects ${actual} items, expected ${expected}.`,
+    true,
+    { name, expectedCount: expected, actualCount: actual }
+  );
+}
+
+function restoreTagColor(libraryID, name, color) {
+  if (!color) return Zotero.Tags.setColor(libraryID, name, false);
+  return Zotero.Tags.setColor(libraryID, name, color.color, color.position);
+}
+
+function tagRenameEndpointClass() {
+  return class ModifiedTagRename extends Zotero.Server.LocalAPI.Settings {
+    supportedMethods = ["POST"];
+
+    async run(requestData) {
+      try {
+        const body = parseBody(this, requestData);
+        const from = normalizedTagName(body.from);
+        const to = normalizedTagName(body.to);
+        const count = expectedCount(body.expectedCount);
+        if (!from || !to || from === to) {
+          return errorResponse(400, "invalid-tag-names", "from and to must be distinct non-empty tag names");
+        }
+        if (count === null) {
+          return errorResponse(400, "invalid-expected-count", "expectedCount must be a non-negative integer");
+        }
+        if (!editableLibrary(requestData.libraryID)) {
+          return errorResponse(423, "library-read-only", "The Zotero library is not editable.");
+        }
+
+        const impact = await tagImpact(requestData.libraryID, from);
+        if (!impact.tagID || !impact.exists) {
+          return errorResponse(404, "tag-not-found", `Tag '${from}' was not found in this library.`);
+        }
+        if (impact.itemIDs.length !== count) return tagCountMismatch(from, count, impact.itemIDs.length);
+
+        const targetImpact = await tagImpact(requestData.libraryID, to);
+        const targetExists = targetImpact.exists;
+        const targetColor = targetImpact.color;
+        await Zotero.Tags.rename(requestData.libraryID, from, to);
+        if (targetExists) await restoreTagColor(requestData.libraryID, to, targetColor);
+        return jsonResponse(200, {
+          renamed: true,
+          from,
+          to,
+          affectedItems: impact.itemIDs.length,
+          targetExisted: targetExists,
+        });
+      }
+      catch (error) {
+        return internalError(error, "Zotero could not rename the tag.");
+      }
+    }
+  };
+}
+
+function tagMergeEndpointClass() {
+  return class ModifiedTagMerge extends Zotero.Server.LocalAPI.Settings {
+    supportedMethods = ["POST"];
+
+    async run(requestData) {
+      try {
+        const body = parseBody(this, requestData);
+        const into = normalizedTagName(body.into);
+        const colorPolicy = body.colorPolicy === undefined ? "preserve-target" : body.colorPolicy;
+        if (!into || !Array.isArray(body.sources) || body.sources.length < 1 || body.sources.length > 50) {
+          return errorResponse(400, "invalid-tag-merge", "into and 1–50 sources are required");
+        }
+        if (colorPolicy !== "preserve-target") {
+          return errorResponse(400, "invalid-color-policy", "Only preserve-target is supported");
+        }
+
+        const sources = [];
+        const seen = new Set([into]);
+        for (const entry of body.sources) {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return errorResponse(400, "invalid-tag-source", "Each source must contain name and expectedCount");
+          }
+          const name = normalizedTagName(entry.name);
+          const count = expectedCount(entry.expectedCount);
+          if (!name || seen.has(name) || count === null) {
+            return errorResponse(400, "invalid-tag-source", "Sources must have unique names and non-negative expectedCount values");
+          }
+          seen.add(name);
+          sources.push({ name, expectedCount: count });
+        }
+        if (!editableLibrary(requestData.libraryID)) {
+          return errorResponse(423, "library-read-only", "The Zotero library is not editable.");
+        }
+
+        const targetImpact = await tagImpact(requestData.libraryID, into);
+        const targetExists = targetImpact.exists;
+        const targetColor = targetImpact.color;
+        const impacts = [];
+        const affectedItems = new Set();
+        let fallbackColor = null;
+        for (const source of sources) {
+          const impact = await tagImpact(requestData.libraryID, source.name);
+          if (!impact.tagID || !impact.exists) {
+            return errorResponse(404, "tag-not-found", `Tag '${source.name}' was not found in this library.`);
+          }
+          if (impact.itemIDs.length !== source.expectedCount) {
+            return tagCountMismatch(source.name, source.expectedCount, impact.itemIDs.length);
+          }
+          const color = tagColor(requestData.libraryID, source.name);
+          if (!fallbackColor && color) fallbackColor = color;
+          for (const itemID of impact.itemIDs) affectedItems.add(itemID);
+          impacts.push({ ...source, itemIDs: impact.itemIDs, color });
+        }
+
+        for (const source of impacts) {
+          await Zotero.Tags.rename(requestData.libraryID, source.name, into);
+          await restoreTagColor(
+            requestData.libraryID,
+            into,
+            targetExists ? targetColor : fallbackColor
+          );
+        }
+        return jsonResponse(200, {
+          merged: true,
+          from: sources.map((source) => source.name),
+          into,
+          affectedItems: affectedItems.size,
+          targetExisted: targetExists,
+          colorPolicy,
+        });
+      }
+      catch (error) {
+        return internalError(error, "Zotero could not merge the tags.");
+      }
+    }
+  };
 }
 
 function statusEndpointClass() {
@@ -1034,6 +1207,8 @@ async function startup(data) {
   Zotero.Server.Endpoints[DOCUMENT_SEGMENTS_ROUTE] = documentSegmentsEndpointClass();
   Zotero.Server.Endpoints[ANNOTATIONS_ROUTE] = annotationsEndpointClass();
   Zotero.Server.Endpoints[ANNOTATION_NOTE_ROUTE] = annotationNoteEndpointClass();
+  Zotero.Server.Endpoints[TAG_RENAME_ROUTE] = tagRenameEndpointClass();
+  Zotero.Server.Endpoints[TAG_MERGE_ROUTE] = tagMergeEndpointClass();
   Zotero.debug(`Zotero Modified Bridge ${bridgeVersion} started`);
 }
 
