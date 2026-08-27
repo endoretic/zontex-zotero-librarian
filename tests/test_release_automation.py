@@ -46,6 +46,20 @@ class ReleaseAutomationTests(unittest.TestCase):
         self.assertEqual(plugin["version"], companion["version"])
         self.assertRegex(plugin["version"], r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
+    def test_repository_and_plugin_use_gplv3_with_upstream_notice(self) -> None:
+        plugin = json.loads(
+            (ROOT / "plugins/zotero-modified/.codex-plugin/plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+        notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        self.assertEqual(plugin["license"], "GPL-3.0-only")
+        self.assertIn("GNU GENERAL PUBLIC LICENSE", license_text)
+        self.assertIn("Version 3, 29 June 2007", license_text)
+        self.assertIn("OpenAI Zotero plugin", notices)
+        self.assertIn("MIT License", notices)
+
     def test_functional_paths_request_a_patch_release(self) -> None:
         policy = RELEASE_POLICY.classify(
             [
