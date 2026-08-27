@@ -243,12 +243,24 @@ class ZoteroManagerTests(unittest.TestCase):
             {"name": "Namespace=Legacy", "expectedCount": 4},
         )
 
+    @mock.patch.object(zm, "api_get_response")
+    def test_tag_item_count_uses_total_results_header(self, api_get_response):
+        api_get_response.return_value = zm.Response(
+            status=200,
+            headers={"Total-Results": "7"},
+            text="[]",
+        )
+        self.assertEqual(zm.tag_item_count("Role/Method"), 7)
+        self.assertIn("tag=Role%2FMethod", api_get_response.call_args.args[0])
+
+    @mock.patch.object(zm, "tag_item_count")
     @mock.patch.object(zm, "colored_tag_map")
-    def test_tag_rename_prints_consolidated_preview(self, colored_tag_map):
+    def test_tag_rename_prints_consolidated_preview(self, colored_tag_map, tag_item_count):
         colored_tag_map.return_value = {
             "Legacy": {"color": "#FF0000", "position": 1},
             "Current": {"color": "#00FF00", "position": 2},
         }
+        tag_item_count.side_effect = [4, 2]
         args = argparse.Namespace(
             from_name="Legacy",
             to_name="Current",
@@ -261,12 +273,17 @@ class ZoteroManagerTests(unittest.TestCase):
         preview = json.loads(output.getvalue())
         self.assertFalse(preview["committed"])
         self.assertEqual(preview["expectedCount"], 4)
+        self.assertEqual(preview["actualCount"], 4)
+        self.assertTrue(preview["countMatches"])
+        self.assertTrue(preview["targetExists"])
         self.assertEqual(preview["targetColor"]["color"], "#00FF00")
 
     @mock.patch.object(zm, "bridge_post")
+    @mock.patch.object(zm, "tag_item_count")
     @mock.patch.object(zm, "colored_tag_map")
-    def test_tag_merge_commits_one_native_request(self, colored_tag_map, bridge_post):
+    def test_tag_merge_commits_one_native_request(self, colored_tag_map, tag_item_count, bridge_post):
         colored_tag_map.return_value = {}
+        tag_item_count.side_effect = [4, 2, 0]
         bridge_post.return_value = {"merged": True, "affectedItems": 6}
         args = argparse.Namespace(
             source=["Legacy=4", "Old=2"],

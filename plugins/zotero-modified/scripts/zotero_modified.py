@@ -1211,6 +1211,15 @@ def colored_tag_map() -> dict[str, dict[str, Any]]:
     }
 
 
+def tag_item_count(name: str) -> int:
+    query = urllib.parse.urlencode({"tag": name, "limit": 1})
+    response = api_get_response(f"{LOCAL_USER}/items?{query}")
+    raw = header(response.headers, "Total-Results")
+    if raw is None or not raw.isdigit():
+        exit_with(f"Zotero did not report the impact count for tag: {name}")
+    return int(raw)
+
+
 def parse_counted_tag(raw: str, *, label: str = "--source") -> dict[str, Any]:
     if not isinstance(raw, str) or "=" not in raw:
         exit_with(f"{label} must use TAG=EXPECTED_COUNT")
@@ -1233,6 +1242,8 @@ def cmd_rename_tag(args: argparse.Namespace) -> None:
     if args.expect_count < 0:
         exit_with("--expect-count must be non-negative")
     colors = colored_tag_map()
+    source_count = tag_item_count(source)
+    target_count = tag_item_count(target)
     preview = {
         "action": "rename-tag",
         "from": source,
@@ -1240,6 +1251,10 @@ def cmd_rename_tag(args: argparse.Namespace) -> None:
         "expectedCount": args.expect_count,
         "sourceColor": colors.get(source),
         "targetColor": colors.get(target),
+        "sourceExists": source_count > 0 or source in colors,
+        "targetExists": target_count > 0 or target in colors,
+        "actualCount": source_count,
+        "countMatches": source_count == args.expect_count,
         "colorPolicy": "preserve-target",
         "committed": False,
     }
@@ -1268,11 +1283,23 @@ def cmd_merge_tags(args: argparse.Namespace) -> None:
     if target in names or len(set(names)) != len(names):
         exit_with("--source names must be unique and must not equal --into")
     colors = colored_tag_map()
+    actual_counts = {name: tag_item_count(name) for name in [*names, target]}
     preview = {
         "action": "merge-tags",
-        "from": [{**source, "color": colors.get(source["name"])} for source in sources],
+        "from": [
+            {
+                **source,
+                "actualCount": actual_counts[source["name"]],
+                "countMatches": actual_counts[source["name"]] == source["expectedCount"],
+                "exists": actual_counts[source["name"]] > 0 or source["name"] in colors,
+                "color": colors.get(source["name"]),
+            }
+            for source in sources
+        ],
         "into": target,
         "targetColor": colors.get(target),
+        "targetExists": actual_counts[target] > 0 or target in colors,
+        "uniqueAffectedItemsUpperBound": sum(actual_counts[name] for name in names),
         "colorPolicy": args.color_policy,
         "committed": False,
     }
