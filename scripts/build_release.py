@@ -11,8 +11,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "zotero-modified"
-ADDON = ROOT / "companion" / "zotero-modified-bridge"
+PLUGIN = ROOT / "plugins" / "zontex"
+ADDON = ROOT / "companion" / "zontex-bridge"
 MARKETPLACE = ROOT / ".agents" / "plugins" / "marketplace.json"
 DIST = ROOT / "dist"
 RELEASE_SOURCE = PLUGIN / ".codex-plugin" / "release-source.json"
@@ -70,28 +70,28 @@ def normalize_repository(value: str | None) -> str | None:
 def plugin_install_guide(version: str, repository: str | None) -> str:
     automatic_update = (
         "The installed Bridge checks this release feed through Zotero's native add-on updater. "
-        "For the Codex package, use `@Zotero Modified check for updates` periodically; review "
+        "For the Codex package, use `@Zontex check for updates` periodically; review "
         "the JSON preview, then explicitly approve the update."
         if repository
         else "For a local build, Bridge update behavior follows its source manifest. GitHub "
         "Actions generates the release metadata used by published builds."
     )
-    return f"""# Zotero Modified {version}: local installation
+    return f"""# Zontex {version}: local installation
 
 This ZIP is a self-contained local Codex marketplace bundle. Keep this directory intact after
-extracting it: `.agents/plugins/marketplace.json` refers to `plugins/zotero-modified`.
+extracting it: `.agents/plugins/marketplace.json` refers to `plugins/zontex`.
 
 ## Install
 
 1. Extract this ZIP to a stable local directory.
 2. In Codex, add that extracted directory as a local marketplace, then install
-   `zotero-modified` from `zotero-modified-private`.
+   `zontex` from `zontex-zotero-librarian`.
 3. First use requires one manual Zotero action: install the matching
-   `zotero-modified-bridge-{version}.xpi` through Zotero's Plugins/Add-ons Manager and restart
+   `zontex-bridge-{version}.xpi` through Zotero's Plugins/Add-ons Manager and restart
    Zotero. Codex must remind you of this step, but cannot silently confirm it for you. The Bridge
    requires Zotero 10.x.
-4. Start a new Codex task and run `@Zotero Modified status` before requesting writes.
-5. Only after `status` reports `modifiedBridge.available: true`, remove installation artifacts
+4. Start a new Codex task and run `@Zontex status` before requesting writes.
+5. Only after `status` reports `zontexBridge.available: true`, remove installation artifacts
    that Codex downloaded or copied: the release ZIP, XPI installer copy, checksum/release-note
    copies, and scratch extraction/staging directories. Keep this stable marketplace directory,
    Git checkouts, backups, Zotero profile files, and unrelated user files.
@@ -102,8 +102,8 @@ extracting it: `.agents/plugins/marketplace.json` refers to `plugins/zotero-modi
 
 ## Uninstall
 
-Remove **Zotero Modified** from Codex's Plugins view. In Zotero's Add-ons Manager, remove
-**Zotero Modified Bridge**, then restart Zotero. You may remove the extracted marketplace folder
+Remove **Zontex** from Codex's Plugins view. In Zotero's Add-ons Manager, remove
+**Zontex Bridge**, then restart Zotero. You may remove the extracted marketplace folder
 only after the Codex plugin has been removed.
 """
 
@@ -131,7 +131,7 @@ def zip_marketplace_bundle(target: Path, version: str, repository: str | None) -
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
             relative = path.relative_to(PLUGIN)
-            archive_path = (Path("plugins") / "zotero-modified" / relative).as_posix()
+            archive_path = (Path("plugins") / "zontex" / relative).as_posix()
             if relative == replacement_path:
                 write_zip_text(archive, archive_path, release_source_config(repository))
             else:
@@ -194,11 +194,11 @@ def release_notes(version: str, artifacts: list[Path], repository: str | None) -
     if repository:
         update_note = f"""## Updates
 
-- **Zotero Modified Bridge:** Zotero checks
+- **Zontex Bridge:** Zotero checks
   `{github_url(repository, 'releases/latest/download/updates.json')}` through its native
   add-on updater. In Zotero's Plugins window, keep **Update Add-ons Automatically** enabled;
   a manual check is also available from its gear menu.
-- **Zotero Modified for Codex:** ask `@Zotero Modified` to check for updates. It previews the
+- **Zontex:** ask `@Zontex` to check for updates. It previews the
   version and verifies the release SHA-256 before an explicitly approved update. The updater
   keeps a timestamped backup, attempts to reinstall the Codex plugin, and requires a new task.
 """
@@ -208,12 +208,12 @@ def release_notes(version: str, artifacts: list[Path], repository: str | None) -
 This local build was made without a GitHub repository identifier, so it does not include a
 release feed. GitHub Actions supplies the update feed for published releases.
 """
-    return f"""# Zotero Modified {version}
+    return f"""# Zontex {version}
 
 ## Compatibility
 
 - **Codex:** Codex Desktop with local marketplace support.
-- **Zotero Modified Bridge:** Zotero **10.0–10.x**.
+- **Zontex Bridge:** Zotero **10.0–10.x**.
 - **Version pairing:** install the ZIP and XPI with the exact same release version.
 
 ## Release assets and SHA-256
@@ -230,22 +230,22 @@ shell-friendly forms.
 ## Install
 
 1. Download both the ZIP and XPI from this release, then verify their SHA-256 values.
-2. Extract `zotero-modified-{version}.zip` to a stable local folder. Do not move only its
+2. Extract `zontex-{version}.zip` to a stable local folder. Do not move only its
    `plugins` subfolder: the included `.agents/plugins/marketplace.json` is required.
 3. In Codex, add the extracted folder as a local marketplace and install
-   `zotero-modified@zotero-modified-private`.
+   `zontex@zontex-zotero-librarian`.
 4. Complete the required one-time manual step in Zotero's Plugins/Add-ons Manager: choose
-   **Install Add-on From File…**, select `zotero-modified-bridge-{version}.xpi`, and restart
+   **Install Add-on From File…**, select `zontex-bridge-{version}.xpi`, and restart
    Zotero. Codex must remind the user of this step rather than silently bypassing it.
-5. Open a new Codex task and run `@Zotero Modified status` before allowing writes.
-6. After `status` reports `modifiedBridge.available: true`, remove only installer artifacts
+5. Open a new Codex task and run `@Zontex status` before allowing writes.
+6. After `status` reports `zontexBridge.available: true`, remove only installer artifacts
    downloaded or copied for this installation: the release ZIP, XPI installer copy,
    checksum/release-note copies, and scratch extraction/staging directories. Keep the stable
    marketplace directory, Git checkouts, backups, Zotero profile files, and unrelated user files.
 
 ## Uninstall
 
-Remove **Zotero Modified** in Codex's Plugins view. Remove **Zotero Modified Bridge** in
+Remove **Zontex** in Codex's Plugins view. Remove **Zontex Bridge** in
 Zotero's Add-ons Manager and restart Zotero. Remove the extracted marketplace directory only after
 the Codex plugin has been removed.
 """
@@ -282,8 +282,8 @@ def main() -> int:
         shutil.rmtree(DIST)
     DIST.mkdir(parents=True, exist_ok=True)
 
-    bundle = DIST / f"zotero-modified-{version}.zip"
-    xpi = DIST / f"zotero-modified-bridge-{version}.xpi"
+    bundle = DIST / f"zontex-{version}.zip"
+    xpi = DIST / f"zontex-bridge-{version}.xpi"
     if not MARKETPLACE.is_file():
         raise SystemExit(f"Missing local marketplace descriptor: {MARKETPLACE}")
     zip_marketplace_bundle(bundle, version, repository)

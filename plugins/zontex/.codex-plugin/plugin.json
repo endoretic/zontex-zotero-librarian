@@ -1,23 +1,23 @@
 {
-  "name": "zotero-modified",
+  "name": "zontex",
   "version": "0.1.3",
-  "description": "Unofficial Zotero 10 workflow tools for safe local curation, experimental native PDF annotations, Ethereal-compatible metadata, and citation styles.",
+  "description": "Research library workflows for Codex and Zotero, including safe curation, metadata, citation styles, and experimental native PDF annotations.",
   "author": {
     "name": "EndoReticulum"
   },
   "license": "GPL-3.0-only",
   "keywords": [
     "zotero",
-    "unofficial",
+    "research workflows",
     "ethereal style",
     "citations",
     "bibliography"
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Zotero Modified",
+    "displayName": "Zontex",
     "shortDescription": "Zotero curation, PDF annotations, metadata, and CSL tools",
-    "longDescription": "An unofficial extension of the upstream OpenAI Zotero workflow, compatible with Ethereal Style metadata. It adds an up-front local-API authorization gate, one-confirmation multi-item curation, structured metadata updates, native colored tags, slash-prefixed statuses, Extra ratings, deduplication, local CSL installation, and experimental native PDF highlights and underlines through the companion Bridge. Dry-run previews and snapshots are produced only when requested.",
+    "longDescription": "Zontex builds on the upstream OpenAI Zotero workflow and supports Ethereal Style metadata conventions. It adds an up-front local-API authorization gate, one-confirmation multi-item curation, structured metadata updates, native colored tags, slash-prefixed statuses, Extra ratings, deduplication, local CSL installation, and experimental native PDF highlights and underlines through Zontex Bridge. Dry-run previews and snapshots are produced only when requested.",
     "developerName": "EndoReticulum",
     "category": "Education & Research",
     "capabilities": [

@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "zotero-modified"
+PLUGIN = ROOT / "plugins" / "zontex"
 STATE_FILE = ROOT / "upstream.json"
 
 
@@ -33,7 +33,7 @@ def main() -> int:
     copies = {
         upstream / "skills" / "zotero" / "scripts" / "zotero.py": PLUGIN / "scripts" / "zotero.py",
         upstream / "skills" / "zotero" / "references" / "local-api-routes.md": (
-            PLUGIN / "skills" / "zotero-modified" / "references" / "upstream-local-api-routes.md"
+            PLUGIN / "skills" / "zontex" / "references" / "upstream-local-api-routes.md"
         ),
         upstream / "assets" / "icon.png": PLUGIN / "assets" / "icon.png",
     }

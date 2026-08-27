@@ -1,15 +1,15 @@
 ---
-name: zotero-modified
-description: Safely manage a personal Zotero 10 library with local CRUD, structured metadata edits, colored-tag/status/rating conventions, CSL installation, and experimental native PDF annotations. Unofficial and private-use only.
+name: zontex
+description: Safely manage a personal Zotero 10 library with local CRUD, structured metadata edits, colored-tag/status/rating conventions, CSL installation, and experimental native PDF annotations through Zontex.
 ---
 
-# Zotero Modified
+# Zontex
 
-Use this skill when a user asks to read or modify a personal Zotero library, apply slash-status/rating conventions, create native PDF annotations, or create and install a CSL citation style. This is an unofficial, private-use adaptation; it is not affiliated with Zotero or Ethereal Style.
+Use this skill when a user asks to read or modify a personal Zotero library, apply slash-status/rating conventions, create native PDF annotations, or create and install a CSL citation style. Zontex is an independent open-source project; it is not affiliated with Zotero, OpenAI, or Ethereal Style.
 
 ## Authorization and confirmation workflow
 
-1. The first Zotero action in every task must be `python scripts/zotero_modified.py status --require-write`. Do not inspect collections, search the library, parse project sources, or continue other project work before this gate passes.
+1. The first Zotero action in every task must be `python scripts/zontex.py status --require-write`. Do not inspect collections, search the library, parse project sources, or continue other project work before this gate passes.
 2. If the local API is unavailable, writes are unsupported, or a cached write authorization is absent, stop immediately. Tell the user what failed. Run `authorize-write` only to obtain the missing key, tell the user to choose **Always Allow** when persistent automation is desired, and rerun `status --require-write` before resuming.
 3. After the authorization gate passes, read-only work and small, non-destructive writes do not need another user confirmation. Invoke the relevant command with `--yes`; do not first run its no-`--yes` preview unless the user asked for a preview or per-step audit.
 4. Before a multi-item import or metadata/tag/status batch, present one consolidated decision summary with the target collection, candidate and duplicate counts, intended metadata policy, and exact expected item count. Obtain one confirmation for the whole agreed batch, then execute its commands with `--yes` and `--expect-count` without repeated authorization prompts or command-by-command previews.
@@ -20,9 +20,9 @@ The script stores the local write key in the current Windows user's local applic
 
 ## First-install handoff and cleanup
 
-- `status` is also the first-install check. If `modifiedBridge.manualInstallRequired` is true, explicitly tell the user that Zotero requires a one-time manual action: open Zotero's Plugins/Add-ons Manager, choose **Install Add-on From File**, select the matching release XPI, restart Zotero, then start a new Codex task and run `status` again. Do not claim that Codex can silently install the XPI or bypass Zotero's confirmation UI.
+- `status` is also the first-install check. If `zontexBridge.manualInstallRequired` is true, explicitly tell the user that Zotero requires a one-time manual action: open Zotero's Plugins/Add-ons Manager, choose **Install Add-on From File**, select the matching release XPI, restart Zotero, then start a new Codex task and run `status` again. Do not claim that Codex can silently install the XPI or bypass Zotero's confirmation UI.
 - The Bridge is optional for basic collection/item CRUD but required for native colored tags/statuses, CSL installation, and active PDF annotations. State this distinction when the Bridge is absent.
-- After `status` confirms `modifiedBridge.available: true`, clean up installer artifacts that Codex created or downloaded for this first installation: the release ZIP, a downloaded or copied XPI installer, copied checksum/release-note files, and scratch extraction or staging directories. Keep the stable marketplace directory, Git checkouts, backups, Zotero profile files, and all unrelated user files. Never delete a pre-existing user-supplied installer without explicit approval, and report every path removed.
+- After `status` confirms `zontexBridge.available: true`, clean up installer artifacts that Codex created or downloaded for this first installation: the release ZIP, a downloaded or copied XPI installer, copied checksum/release-note files, and scratch extraction or staging directories. Keep the stable marketplace directory, Git checkouts, backups, Zotero profile files, and all unrelated user files. Never delete a pre-existing user-supplied installer without explicit approval, and report every path removed.
 
 ## Data conventions
 
@@ -34,13 +34,13 @@ The script stores the local write key in the current Windows user's local applic
 - Before creating topical tags, inspect existing tags with `python scripts/zotero.py tags`. Reuse the controlled vocabulary and never generate one unique AI tag per item.
 - Do not add journal names, impact factors, journal tiers, or easyScholar metadata unless the user explicitly changes the project scope.
 
-The colored-tag/status, CSL, and active-annotation commands require the separately installed Zotero Modified Bridge XPI. Basic collection/item CRUD uses Zotero 10's stock authorized local API.
+The colored-tag/status, CSL, and active-annotation commands require the separately installed Zontex Bridge XPI. Basic collection/item CRUD uses Zotero 10's stock authorized local API.
 
-## Zotero Modified Bridge vNext
+## Zontex Bridge
 
 - Resolve any current/selected/open Zotero referent with `context` first; do not infer it from conversation history. It reports library-tab selection separately from the active Reader.
 - Active PDF annotation is experimental. The current Zotero 10.0.1 implementation uses feature-detected private Reader mapper/manager methods and may break after a Zotero update.
-- Surface every entry in `modifiedBridge.compatibility.warnings` returned by the required `status` gate. Before `create-annotation`, call `context`, report any `reader.capabilities.annotation.warnings`, and require the requested `highlight`/`underline` capability plus a non-empty annotation backend; otherwise stop without attempting the write. Version or newly available standard-API warnings are advisory when the effective backend remains compatible and do not require another confirmation.
+- Surface every entry in `zontexBridge.compatibility.warnings` returned by the required `status` gate. Before `create-annotation`, call `context`, report any `reader.capabilities.annotation.warnings`, and require the requested `highlight`/`underline` capability plus a non-empty annotation backend; otherwise stop without attempting the write. Version or newly available standard-API warnings are advisory when the effective backend remains compatible and do not require another confirmation.
 - `render` is a read-only native Zotero CSL preview. Use it after `install-csl` when iterating on citation or bibliography output.
 - `navigate` is a non-persistent UI side effect for revealing an item or opening an attachment/annotation. It must use explicit keys and does not claim visual readback beyond the requested target.
 - `rename-tag` and `merge-tags` are library-wide, high-impact writes. Present one consolidated summary of source/target names, expected affected-item counts, and native colors; run with `--yes` only after that explicit confirmation. The Bridge rechecks every count immediately before mutation and preserves the target color.
@@ -77,24 +77,24 @@ Use this sequence when the user wants a collection built from a literature list.
 ## Common commands
 
 ```powershell
-python scripts/zotero_modified.py status --require-write
-python scripts/zotero_modified.py authorize-write
-python scripts/zotero_modified.py collections
-python scripts/zotero_modified.py backup-collection --collection-name BN5001 --file .\BN5001-backup.json
-python scripts/zotero_modified.py rename-collection --current-name BN5001 --name "BN5001 Review" --yes
-python scripts/zotero_modified.py batch-update-items --collection-name BN5001 --expect-count 37 --set language=en --yes
-python scripts/zotero_modified.py create-status --name reading --color "#4C9AFF" --yes
-python scripts/zotero_modified.py set-status --collection-name BN5001 --expect-count 37 --name /reading --yes
-python scripts/zotero_modified.py set-rating --item-key ABCD2345 --value 5 --yes
-python scripts/zotero_modified.py colored-tags
-python scripts/zotero_modified.py rename-tag --from "Old tag" --to "New tag" --expect-count 12
-python scripts/zotero_modified.py merge-tags --source "Old tag=12" --source "Legacy=3" --into "New tag"
-python scripts/zotero_modified.py merge-items --master ABCD2345 --other EFGH6789 --expected-version ABCD2345=8 --expected-version EFGH6789=3
-python scripts/zotero_modified.py install-csl --file .\my-style.csl
-python scripts/zotero_modified.py context
-python scripts/zotero_modified.py document-segments --attachment-key ABCD2345
-python scripts/zotero_modified.py create-annotation --attachment-key ABCD2345 --source-hash "SOURCE_HASH_FROM_DOCUMENT_SEGMENTS" --segment-id block:5 --start 0 --end 18 --type highlight --yes
-python scripts/zotero_modified.py annotations-to-note --parent-item-key ABCD2345 --annotation-key EFGH6789 --order document --yes
+python scripts/zontex.py status --require-write
+python scripts/zontex.py authorize-write
+python scripts/zontex.py collections
+python scripts/zontex.py backup-collection --collection-name BN5001 --file .\BN5001-backup.json
+python scripts/zontex.py rename-collection --current-name BN5001 --name "BN5001 Review" --yes
+python scripts/zontex.py batch-update-items --collection-name BN5001 --expect-count 37 --set language=en --yes
+python scripts/zontex.py create-status --name reading --color "#4C9AFF" --yes
+python scripts/zontex.py set-status --collection-name BN5001 --expect-count 37 --name /reading --yes
+python scripts/zontex.py set-rating --item-key ABCD2345 --value 5 --yes
+python scripts/zontex.py colored-tags
+python scripts/zontex.py rename-tag --from "Old tag" --to "New tag" --expect-count 12
+python scripts/zontex.py merge-tags --source "Old tag=12" --source "Legacy=3" --into "New tag"
+python scripts/zontex.py merge-items --master ABCD2345 --other EFGH6789 --expected-version ABCD2345=8 --expected-version EFGH6789=3
+python scripts/zontex.py install-csl --file .\my-style.csl
+python scripts/zontex.py context
+python scripts/zontex.py document-segments --attachment-key ABCD2345
+python scripts/zontex.py create-annotation --attachment-key ABCD2345 --source-hash "SOURCE_HASH_FROM_DOCUMENT_SEGMENTS" --segment-id block:5 --start 0 --end 18 --type highlight --yes
+python scripts/zontex.py annotations-to-note --parent-item-key ABCD2345 --annotation-key EFGH6789 --order document --yes
 python scripts/update_release.py
 python scripts/update_release.py --apply --yes --reinstall-codex
 ```

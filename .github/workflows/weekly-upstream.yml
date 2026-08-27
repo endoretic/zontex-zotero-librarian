@@ -32,8 +32,8 @@ jobs:
       - name: Test and build
         run: |
           python -m unittest discover -s tests -v
-          python -m unittest discover -s plugins/zotero-modified/tests -v
-          node --check companion/zotero-modified-bridge/bootstrap.js
+          python -m unittest discover -s plugins/zontex/tests -v
+          node --check companion/zontex-bridge/bootstrap.js
           python scripts/build_release.py --clean
 
       - name: Detect changes
@@ -66,7 +66,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add plugins/zotero-modified upstream.json
+          git add plugins/zontex upstream.json
           git commit -m "Sync OpenAI Zotero plugin ${UPSTREAM_VERSION}"
           git push origin "$branch"
           if [[ "$RELEASE_KIND" == "patch" ]]; then

@@ -9,8 +9,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_MANIFEST = ROOT / "plugins" / "zotero-modified" / ".codex-plugin" / "plugin.json"
-ADDON_MANIFEST = ROOT / "companion" / "zotero-modified-bridge" / "manifest.json"
+PLUGIN_MANIFEST = ROOT / "plugins" / "zontex" / ".codex-plugin" / "plugin.json"
+ADDON_MANIFEST = ROOT / "companion" / "zontex-bridge" / "manifest.json"
 PATCH_VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 

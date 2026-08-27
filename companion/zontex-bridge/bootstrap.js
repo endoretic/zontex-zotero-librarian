@@ -1,16 +1,16 @@
-const STATUS_ROUTE = "/api/users/:userID/zotero-modified/statuses";
-const STYLES_ROUTE = "/api/users/:userID/zotero-modified/styles";
-const CONTEXT_ROUTE = "/api/users/:userID/zotero-modified/context";
-const RENDER_ROUTE = "/api/users/:userID/zotero-modified/render";
-const NAVIGATE_ROUTE = "/api/users/:userID/zotero-modified/navigate";
-const ITEM_MERGE_ROUTE = "/api/users/:userID/zotero-modified/items/merge";
-const DOCUMENT_SEGMENTS_ROUTE = "/api/users/:userID/zotero-modified/document-segments";
-const ANNOTATIONS_ROUTE = "/api/users/:userID/zotero-modified/annotations";
-const ANNOTATION_NOTE_ROUTE = "/api/users/:userID/zotero-modified/annotations/note";
+const STATUS_ROUTE = "/api/users/:userID/zontex/statuses";
+const STYLES_ROUTE = "/api/users/:userID/zontex/styles";
+const CONTEXT_ROUTE = "/api/users/:userID/zontex/context";
+const RENDER_ROUTE = "/api/users/:userID/zontex/render";
+const NAVIGATE_ROUTE = "/api/users/:userID/zontex/navigate";
+const ITEM_MERGE_ROUTE = "/api/users/:userID/zontex/items/merge";
+const DOCUMENT_SEGMENTS_ROUTE = "/api/users/:userID/zontex/document-segments";
+const ANNOTATIONS_ROUTE = "/api/users/:userID/zontex/annotations";
+const ANNOTATION_NOTE_ROUTE = "/api/users/:userID/zontex/annotations/note";
 const TESTED_ZOTERO_VERSION = "10.0.1";
 const PRIVATE_ANNOTATION_BACKEND = "private-reader-internals";
-const TAG_RENAME_ROUTE = "/api/users/:userID/zotero-modified/tags/rename";
-const TAG_MERGE_ROUTE = "/api/users/:userID/zotero-modified/tags/merge";
+const TAG_RENAME_ROUTE = "/api/users/:userID/zontex/tags/rename";
+const TAG_MERGE_ROUTE = "/api/users/:userID/zontex/tags/merge";
 const ROUTES = [
   STATUS_ROUTE,
   STYLES_ROUTE,
@@ -167,7 +167,7 @@ function reportCompatibilityWarnings(compatibility) {
   for (let warning of compatibility.warnings) {
     if (reportedCompatibilityWarnings.has(warning)) continue;
     reportedCompatibilityWarnings.add(warning);
-    Zotero.logError(new Error(`[Zotero Modified Bridge] ${warning}`));
+    Zotero.logError(new Error(`[Zontex Bridge] ${warning}`));
   }
 }
 
@@ -238,7 +238,7 @@ function parseBody(endpoint, requestData) {
   return body;
 }
 
-function internalError(error, message = "Unexpected Zotero Modified Bridge error") {
+function internalError(error, message = "Unexpected Zontex Bridge error") {
   if (Number.isInteger(error?.bridgeStatus)) {
     return errorResponse(
       error.bridgeStatus,
@@ -306,7 +306,7 @@ function restoreTagColor(libraryID, name, color) {
 }
 
 function tagRenameEndpointClass() {
-  return class ModifiedTagRename extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexTagRename extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["POST"];
 
     async run(requestData) {
@@ -352,7 +352,7 @@ function tagRenameEndpointClass() {
 }
 
 function tagMergeEndpointClass() {
-  return class ModifiedTagMerge extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexTagMerge extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["POST"];
 
     async run(requestData) {
@@ -430,7 +430,7 @@ function tagMergeEndpointClass() {
 }
 
 function statusEndpointClass() {
-  return class ModifiedStatuses extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexStatuses extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["GET", "PUT", "DELETE"];
 
     async run(requestData) {
@@ -441,7 +441,7 @@ function statusEndpointClass() {
         const compatibility = annotationCompatibility(getActiveReader());
         reportCompatibilityWarnings(compatibility);
         return jsonResponse(200, {
-          bridge: "zotero-modified-bridge",
+          bridge: "zontex-bridge",
           version: bridgeVersion,
           compatibility,
           coloredTags: all,
@@ -499,7 +499,7 @@ async function styleRecord(style, includeCSL = false) {
 }
 
 function stylesEndpointClass() {
-  return class ModifiedStyles extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexStyles extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["GET", "POST", "DELETE"];
 
     async run(requestData) {
@@ -548,7 +548,7 @@ function stylesEndpointClass() {
 }
 
 function contextEndpointClass() {
-  return class ModifiedContext extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexContext extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["GET"];
 
     async run(requestData) {
@@ -567,7 +567,7 @@ function contextEndpointClass() {
         }
         const reader = await activeReaderRecord();
         return jsonResponse(200, {
-          bridge: "zotero-modified-bridge",
+          bridge: "zontex-bridge",
           version: bridgeVersion,
           activeTab: {
             id: win?.Zotero_Tabs?.selectedID || null,
@@ -592,7 +592,7 @@ function contextEndpointClass() {
 }
 
 function renderEndpointClass() {
-  return class ModifiedRender extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexRender extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["POST"];
 
     async run(requestData) {
@@ -658,7 +658,7 @@ function renderEndpointClass() {
 }
 
 function navigateEndpointClass() {
-  return class ModifiedNavigate extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexNavigate extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["POST"];
 
     async run(requestData) {
@@ -831,7 +831,7 @@ function documentSourceHash(document) {
 }
 
 function documentSegmentsEndpointClass() {
-  return class ModifiedDocumentSegments extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexDocumentSegments extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["GET"];
 
     async run(requestData) {
@@ -1040,7 +1040,7 @@ async function waitForAnnotationItem(attachment, key) {
 }
 
 function annotationsEndpointClass() {
-  return class ModifiedAnnotations extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexAnnotations extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["POST"];
 
     async run(requestData) {
@@ -1131,7 +1131,7 @@ function annotationsEndpointClass() {
 }
 
 function annotationNoteEndpointClass() {
-  return class ModifiedAnnotationNote extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexAnnotationNote extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["POST"];
 
     async run(requestData) {
@@ -1245,7 +1245,7 @@ function missingMergeValues(actual, expected) {
 }
 
 function itemMergeEndpointClass() {
-  return class ModifiedItemMerge extends Zotero.Server.LocalAPI.Settings {
+  return class ZontexItemMerge extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["POST"];
 
     async run(requestData) {
@@ -1359,7 +1359,7 @@ async function startup(data) {
   Zotero.Server.Endpoints[TAG_RENAME_ROUTE] = tagRenameEndpointClass();
   Zotero.Server.Endpoints[TAG_MERGE_ROUTE] = tagMergeEndpointClass();
   Zotero.Server.Endpoints[ITEM_MERGE_ROUTE] = itemMergeEndpointClass();
-  Zotero.debug(`Zotero Modified Bridge ${bridgeVersion} started`);
+  Zotero.debug(`Zontex Bridge ${bridgeVersion} started`);
 }
 
 function shutdown() {

@@ -1,14 +1,14 @@
 {
-  "name": "zotero-modified-private",
+  "name": "zontex-zotero-librarian",
   "interface": {
-    "displayName": "Zotero Modified — Private"
+    "displayName": "Zontex"
   },
   "plugins": [
     {
-      "name": "zotero-modified",
+      "name": "zontex",
       "source": {
         "source": "local",
-        "path": "./plugins/zotero-modified"
+        "path": "./plugins/zontex"
       },
       "policy": {
         "installation": "AVAILABLE",
