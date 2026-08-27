@@ -1211,7 +1211,31 @@ def parse_expected_version(raw: str) -> tuple[str, int]:
     return key, version
 
 
-def merge_item_summary(data: dict[str, Any]) -> dict[str, Any]:
+def item_children(item_key: str) -> list[dict[str, Any]]:
+    value = api_get(f"{LOCAL_USER}/items/{urllib.parse.quote(item_key)}/children")
+    if not isinstance(value, list):
+        exit_with(f"Unexpected Zotero child-item shape for: {item_key}")
+    return [data_of(row) for row in value]
+
+
+def merge_child_counts(item_key: str) -> dict[str, int]:
+    children = item_children(item_key)
+    attachments = [child for child in children if child.get("itemType") == "attachment"]
+    annotation_count = sum(child.get("itemType") == "annotation" for child in children)
+    for attachment in attachments:
+        key = attachment.get("key")
+        if key:
+            annotation_count += sum(
+                child.get("itemType") == "annotation" for child in item_children(str(key))
+            )
+    return {
+        "attachmentCount": len(attachments),
+        "noteCount": sum(child.get("itemType") == "note" for child in children),
+        "annotationCount": annotation_count,
+    }
+
+
+def merge_item_summary(data: dict[str, Any], child_counts: dict[str, int]) -> dict[str, Any]:
     return {
         "key": data.get("key"),
         "version": data.get("version"),
@@ -1221,6 +1245,7 @@ def merge_item_summary(data: dict[str, Any]) -> dict[str, Any]:
         "date": data.get("date"),
         "tagCount": len(data.get("tags", [])) if isinstance(data.get("tags"), list) else 0,
         "collectionCount": len(data.get("collections", [])) if isinstance(data.get("collections"), list) else 0,
+        **child_counts,
     }
 
 
@@ -1248,10 +1273,14 @@ def cmd_merge_items(args: argparse.Namespace) -> None:
         data_of(api_get(f"{LOCAL_USER}/items/{urllib.parse.quote(key)}"))
         for key in keys
     ]
+    summaries = [
+        merge_item_summary(item, merge_child_counts(str(item.get("key") or key)))
+        for item, key in zip(items, keys)
+    ]
     preview = {
         "action": "merge-items",
-        "master": merge_item_summary(items[0]),
-        "others": [merge_item_summary(item) for item in items[1:]],
+        "master": summaries[0],
+        "others": summaries[1:],
         "expectedVersions": expected_versions,
         "committed": False,
     }

@@ -529,6 +529,9 @@ function itemMergeEndpointClass() {
           if (!mergeableItem(item)) {
             return errorResponse(422, "item-not-mergeable", `Item '${key}' must be a top-level regular item.`);
           }
+          if (typeof item.isEditable === "function" && !item.isEditable()) {
+            return errorResponse(423, "item-read-only", `Item '${key}' is not editable.`);
+          }
           if (Number(item.version) !== body.expectedVersions[key]) {
             return errorResponse(
               412,
