@@ -191,10 +191,13 @@ function tagColor(libraryID, name) {
 
 async function tagImpact(libraryID, name) {
   const tagID = Zotero.Tags.getID(name);
-  if (!tagID) return { tagID: null, itemIDs: [] };
+  const color = tagColor(libraryID, name);
+  const itemIDs = tagID ? await Zotero.Tags.getTagItems(libraryID, tagID) : [];
   return {
-    tagID,
-    itemIDs: await Zotero.Tags.getTagItems(libraryID, tagID),
+    tagID: tagID || null,
+    itemIDs,
+    color,
+    exists: itemIDs.length > 0 || !!color,
   };
 }
 
@@ -243,12 +246,14 @@ function tagRenameEndpointClass() {
         }
 
         const impact = await tagImpact(requestData.libraryID, from);
-        if (!impact.tagID) return errorResponse(404, "tag-not-found", `Tag '${from}' was not found.`);
+        if (!impact.tagID || !impact.exists) {
+          return errorResponse(404, "tag-not-found", `Tag '${from}' was not found in this library.`);
+        }
         if (impact.itemIDs.length !== count) return tagCountMismatch(from, count, impact.itemIDs.length);
 
         const targetImpact = await tagImpact(requestData.libraryID, to);
-        const targetExists = !!targetImpact.tagID;
-        const targetColor = tagColor(requestData.libraryID, to);
+        const targetExists = targetImpact.exists;
+        const targetColor = targetImpact.color;
         await Zotero.Tags.rename(requestData.libraryID, from, to);
         if (targetExists) await restoreTagColor(requestData.libraryID, to, targetColor);
         return jsonResponse(200, {
@@ -256,6 +261,7 @@ function tagRenameEndpointClass() {
           from,
           to,
           affectedItems: impact.itemIDs.length,
+          targetExisted: targetExists,
         });
       }
       catch (error) {
@@ -300,14 +306,16 @@ function tagMergeEndpointClass() {
         }
 
         const targetImpact = await tagImpact(requestData.libraryID, into);
-        const targetExists = !!targetImpact.tagID;
-        const targetColor = tagColor(requestData.libraryID, into);
+        const targetExists = targetImpact.exists;
+        const targetColor = targetImpact.color;
         const impacts = [];
         const affectedItems = new Set();
         let fallbackColor = null;
         for (const source of sources) {
           const impact = await tagImpact(requestData.libraryID, source.name);
-          if (!impact.tagID) return errorResponse(404, "tag-not-found", `Tag '${source.name}' was not found.`);
+          if (!impact.tagID || !impact.exists) {
+            return errorResponse(404, "tag-not-found", `Tag '${source.name}' was not found in this library.`);
+          }
           if (impact.itemIDs.length !== source.expectedCount) {
             return tagCountMismatch(source.name, source.expectedCount, impact.itemIDs.length);
           }
@@ -330,6 +338,7 @@ function tagMergeEndpointClass() {
           from: sources.map((source) => source.name),
           into,
           affectedItems: affectedItems.size,
+          targetExisted: targetExists,
           colorPolicy,
         });
       }
