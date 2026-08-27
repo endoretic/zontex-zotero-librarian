@@ -495,6 +495,22 @@ function mergeableItem(item) {
     && typeof item.isRegularItem === "function" && item.isRegularItem();
 }
 
+function itemMergeSnapshot(items) {
+  const collect = (method) => [...new Set(items.flatMap((item) => (
+    typeof item[method] === "function" ? item[method]() : []
+  )))];
+  return {
+    collectionIDs: collect("getCollections"),
+    attachmentIDs: collect("getAttachments"),
+    noteIDs: collect("getNotes"),
+  };
+}
+
+function missingMergeValues(actual, expected) {
+  const values = new Set(actual);
+  return expected.filter((value) => !values.has(value));
+}
+
 function itemMergeEndpointClass() {
   return class ModifiedItemMerge extends Zotero.Server.LocalAPI.Settings {
     supportedMethods = ["POST"];
@@ -544,6 +560,7 @@ function itemMergeEndpointClass() {
           items.push(item);
         }
 
+        const beforeMerge = itemMergeSnapshot(items);
         const mergeItems = nativeMergeItems();
         if (!mergeItems) {
           return errorResponse(501, "capability-unavailable", "Zotero's native item merge module is unavailable.", true);
@@ -553,6 +570,19 @@ function itemMergeEndpointClass() {
         const master = await itemByKey(requestData.libraryID, masterKey);
         if (!master || master.deleted) {
           return errorResponse(500, "merge-readback-failed", "The merged master item could not be read back.", true);
+        }
+        const afterMerge = itemMergeSnapshot([master]);
+        const missingCollections = missingMergeValues(afterMerge.collectionIDs, beforeMerge.collectionIDs);
+        const missingAttachments = missingMergeValues(afterMerge.attachmentIDs, beforeMerge.attachmentIDs);
+        const missingNotes = missingMergeValues(afterMerge.noteIDs, beforeMerge.noteIDs);
+        if (missingCollections.length || missingAttachments.length || missingNotes.length) {
+          return errorResponse(
+            500,
+            "merge-readback-failed",
+            "The merged master item did not retain every collection or child item.",
+            true,
+            { missingCollections, missingAttachments, missingNotes }
+          );
         }
         const trashed = [];
         for (const key of otherKeys) {
