@@ -42,6 +42,9 @@ The colored-tag/status and CSL commands require the separately installed Zotero 
 - `render` is a read-only native Zotero CSL preview. Use it after `install-csl` when iterating on citation or bibliography output.
 - `navigate` is a non-persistent UI side effect for revealing an item or opening an attachment/annotation. It must use explicit keys and does not claim visual readback beyond the requested target.
 - The Bridge remains a thin privileged layer: ordinary item/collection/tag/note CRUD stays on the stock Local API, and no generic execution endpoint or Reader UI hook is allowed.
+- `document-segments` reads active PDF SDT leaf blocks as lossless, exact-offset segments. Use `segmentId` with a `[start,end)` range; never retry a stale locator after `412 document-changed`.
+- `create-annotation` is limited to active PDF Reader + native SDT + highlight/underline. Use it directly for one or two explicitly requested annotations; autonomous batches require one consolidated confirmation first.
+- `annotations-to-note` uses Zotero's native annotation-to-note path. Validate that all annotations belong to the requested parent item; classification and prose remain outside the Bridge.
 
 ## Release updates
 
