@@ -163,6 +163,28 @@ class ZoteroManagerTests(unittest.TestCase):
         self.assertEqual(args.mode, "citation")
         args = parser.parse_args(["navigate", "--open-attachment", "PDF12345"])
         self.assertEqual(args.open_attachment, "PDF12345")
+        args = parser.parse_args([
+            "rename-tag",
+            "--from",
+            "Legacy",
+            "--to",
+            "Current",
+            "--expect-count",
+            "4",
+        ])
+        self.assertEqual(args.from_name, "Legacy")
+        self.assertEqual(args.expect_count, 4)
+        args = parser.parse_args([
+            "merge-tags",
+            "--source",
+            "Legacy=4",
+            "--source",
+            "Old=2",
+            "--into",
+            "Current",
+        ])
+        self.assertEqual(args.source, ["Legacy=4", "Old=2"])
+        self.assertEqual(args.color_policy, "preserve-target")
 
     @mock.patch.object(zm, "api_get")
     @mock.patch.object(zm, "require_companion")
@@ -214,6 +236,60 @@ class ZoteroManagerTests(unittest.TestCase):
             {"action": "open-attachment", "itemKey": "PDF12345"},
             "POST Bridge navigate (open-attachment)",
         )
+
+    def test_parse_counted_tag_splits_on_the_last_equals(self):
+        self.assertEqual(
+            zm.parse_counted_tag("Namespace=Legacy=4"),
+            {"name": "Namespace=Legacy", "expectedCount": 4},
+        )
+
+    @mock.patch.object(zm, "colored_tag_map")
+    def test_tag_rename_prints_consolidated_preview(self, colored_tag_map):
+        colored_tag_map.return_value = {
+            "Legacy": {"color": "#FF0000", "position": 1},
+            "Current": {"color": "#00FF00", "position": 2},
+        }
+        args = argparse.Namespace(
+            from_name="Legacy",
+            to_name="Current",
+            expect_count=4,
+            yes=False,
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zm.cmd_rename_tag(args)
+        preview = json.loads(output.getvalue())
+        self.assertFalse(preview["committed"])
+        self.assertEqual(preview["expectedCount"], 4)
+        self.assertEqual(preview["targetColor"]["color"], "#00FF00")
+
+    @mock.patch.object(zm, "bridge_post")
+    @mock.patch.object(zm, "colored_tag_map")
+    def test_tag_merge_commits_one_native_request(self, colored_tag_map, bridge_post):
+        colored_tag_map.return_value = {}
+        bridge_post.return_value = {"merged": True, "affectedItems": 6}
+        args = argparse.Namespace(
+            source=["Legacy=4", "Old=2"],
+            into="Current",
+            color_policy="preserve-target",
+            yes=True,
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zm.cmd_merge_tags(args)
+        bridge_post.assert_called_once_with(
+            zm.MODIFIED_TAG_MERGE_PATH,
+            {
+                "sources": [
+                    {"name": "Legacy", "expectedCount": 4},
+                    {"name": "Old", "expectedCount": 2},
+                ],
+                "into": "Current",
+                "colorPolicy": "preserve-target",
+            },
+            "POST Bridge tag merge",
+        )
+        self.assertTrue(json.loads(output.getvalue())["committed"])
 
     def test_invalid_field_is_rejected_before_write(self):
         data = {
