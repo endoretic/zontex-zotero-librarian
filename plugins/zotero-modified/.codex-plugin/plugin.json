@@ -1,11 +1,11 @@
 {
   "name": "zotero-modified",
   "version": "0.1.3",
-  "description": "Unofficial Zotero 10 workflow tools: safe local curation, ethereal style metadata supported, and customized citation format.",
+  "description": "Unofficial Zotero 10 workflow tools for safe local curation, experimental native PDF annotations, Ethereal-compatible metadata, and citation styles.",
   "author": {
     "name": "EndoReticulum"
   },
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "keywords": [
     "zotero",
     "unofficial",
@@ -16,8 +16,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Zotero Modified",
-    "shortDescription": "Zotero curation, status/rating conventions, and CSL tools",
-    "longDescription": "An unofficial extension of the upstream OpenAI Zotero workflow, compatible with Ethereal Style metadata. It adds an up-front local-API authorization gate, one-confirmation multi-item curation, structured metadata updates, native colored tags, slash-prefixed statuses, Extra ratings, deduplication, and local CSL installation. Dry-run previews and snapshots are produced only when requested.",
+    "shortDescription": "Zotero curation, PDF annotations, metadata, and CSL tools",
+    "longDescription": "An unofficial extension of the upstream OpenAI Zotero workflow, compatible with Ethereal Style metadata. It adds an up-front local-API authorization gate, one-confirmation multi-item curation, structured metadata updates, native colored tags, slash-prefixed statuses, Extra ratings, deduplication, local CSL installation, and experimental native PDF highlights and underlines through the companion Bridge. Dry-run previews and snapshots are produced only when requested.",
     "developerName": "EndoReticulum",
     "category": "Education & Research",
     "capabilities": [
@@ -29,9 +29,10 @@
     "logo": "./assets/flower_a.png",
     "brandColor": "#A855F7",
     "defaultPrompt": [
-      "create and curate a collection with a preview before every write",
+      "create and curate a collection with one consolidated confirmation for multi-item writes",
       "write statuses, ratings, roles, and controlled topical metadata following Ethereal Style conventions",
-      "write and install a CSL template for Zotero Word integration"
+      "write and install a CSL template for Zotero Word integration",
+      "highlight or underline an exact passage in the active Zotero PDF and convert selected annotations into a native note"
     ]
   }
 }

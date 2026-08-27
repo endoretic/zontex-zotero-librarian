@@ -46,6 +46,20 @@ class ReleaseAutomationTests(unittest.TestCase):
         self.assertEqual(plugin["version"], companion["version"])
         self.assertRegex(plugin["version"], r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
+    def test_repository_and_plugin_use_gplv3_with_upstream_notice(self) -> None:
+        plugin = json.loads(
+            (ROOT / "plugins/zotero-modified/.codex-plugin/plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+        notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        self.assertEqual(plugin["license"], "GPL-3.0-only")
+        self.assertIn("GNU GENERAL PUBLIC LICENSE", license_text)
+        self.assertIn("Version 3, 29 June 2007", license_text)
+        self.assertIn("OpenAI Zotero plugin", notices)
+        self.assertIn("MIT License", notices)
+
     def test_functional_paths_request_a_patch_release(self) -> None:
         policy = RELEASE_POLICY.classify(
             [
@@ -124,6 +138,26 @@ class ReleaseAutomationTests(unittest.TestCase):
         self.assertIn("bridgeVersion = data && data.version", bootstrap)
         self.assertIn("version: bridgeVersion", bootstrap)
         self.assertNotIn('version: "0.1.0"', bootstrap)
+
+    def test_codex_plugin_exposes_and_guards_experimental_annotations(self) -> None:
+        plugin = json.loads(
+            (ROOT / "plugins/zotero-modified/.codex-plugin/plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        skill = (ROOT / "plugins/zotero-modified/skills/zotero-modified/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("PDF annotations", plugin["interface"]["shortDescription"])
+        self.assertTrue(
+            any(
+                "highlight or underline" in prompt
+                for prompt in plugin["interface"]["defaultPrompt"]
+            )
+        )
+        self.assertIn("modifiedBridge.compatibility.warnings", skill)
+        self.assertIn("reader.capabilities.annotation.warnings", skill)
+        self.assertIn("Active PDF annotation is experimental", skill)
 
     def test_release_updater_rejects_nonstable_versions_and_unsafe_archives(self) -> None:
         self.assertEqual(RELEASE_UPDATER.version_key("1.2.3"), (1, 2, 3))

@@ -41,6 +41,9 @@ MODIFIED_STYLES_PATH = f"{LOCAL_USER}/zotero-modified/styles"
 MODIFIED_CONTEXT_PATH = f"{LOCAL_USER}/zotero-modified/context"
 MODIFIED_RENDER_PATH = f"{LOCAL_USER}/zotero-modified/render"
 MODIFIED_NAVIGATE_PATH = f"{LOCAL_USER}/zotero-modified/navigate"
+MODIFIED_DOCUMENT_SEGMENTS_PATH = f"{LOCAL_USER}/zotero-modified/document-segments"
+MODIFIED_ANNOTATIONS_PATH = f"{LOCAL_USER}/zotero-modified/annotations"
+MODIFIED_ANNOTATION_NOTE_PATH = f"{LOCAL_USER}/zotero-modified/annotations/note"
 STATUS_PREFIX = "/"
 RATE_LINE_RE = re.compile(r"^\s*rate\s*:\s*([1-5])\s*$", re.IGNORECASE)
 CSL_NAMESPACE = "http://purl.org/net/xbiblio/csl"
@@ -249,6 +252,7 @@ def companion_info() -> dict[str, Any]:
         return {
             "available": True,
             "version": body.get("version") if isinstance(body, dict) else None,
+            "compatibility": body.get("compatibility") if isinstance(body, dict) else None,
             "manualInstallRequired": False,
         }
     return {
@@ -1196,6 +1200,55 @@ def cmd_navigate(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_document_segments(args: argparse.Namespace) -> None:
+    params = {"limit": args.limit}
+    if args.cursor is not None:
+        params["cursor"] = args.cursor
+    if args.attachment_key:
+        params["attachmentKey"] = args.attachment_key
+    if args.include_auxiliary:
+        params["includeAuxiliary"] = "1"
+    dump_json(api_get(f"{MODIFIED_DOCUMENT_SEGMENTS_PATH}?{urllib.parse.urlencode(params)}"))
+
+
+def cmd_create_annotation(args: argparse.Namespace) -> None:
+    body = {
+        "attachmentKey": args.attachment_key,
+        "sourceHash": args.source_hash,
+        "target": {"segmentId": args.segment_id, "start": args.start, "end": args.end},
+        "type": args.type,
+        "color": args.color,
+        "comment": args.comment or "",
+        "tags": args.tag or [],
+    }
+    preview = {"action": "create-annotation", "request": body, "committed": False}
+    if not args.yes:
+        dump_json(preview)
+        return
+    preview.update({"committed": True, "response": bridge_post(
+        MODIFIED_ANNOTATIONS_PATH, body, "POST Bridge annotation"
+    )})
+    dump_json(preview)
+
+
+def cmd_annotations_to_note(args: argparse.Namespace) -> None:
+    body = {
+        "annotationKeys": args.annotation_key,
+        "parentItemKey": args.parent_item_key,
+        "order": args.order,
+        "noComments": args.no_comments,
+        "noHeader": args.no_header,
+    }
+    preview = {"action": "annotations-to-note", "request": body, "committed": False}
+    if not args.yes:
+        dump_json(preview)
+        return
+    preview.update({"committed": True, "response": bridge_post(
+        MODIFIED_ANNOTATION_NOTE_PATH, body, "POST Bridge annotation note"
+    )})
+    dump_json(preview)
+
+
 def cmd_install_csl(args: argparse.Namespace) -> None:
     csl = Path(args.file).read_text(encoding="utf-8")
     metadata = find_csl_metadata(csl)
@@ -1446,6 +1499,37 @@ def build_parser() -> argparse.ArgumentParser:
     navigation.add_argument("--open-attachment")
     navigation.add_argument("--open-annotation")
     navigate.set_defaults(func=cmd_navigate)
+
+    segments = commands.add_parser("document-segments", help="Read active PDF SDT segments")
+    segments.add_argument("--attachment-key")
+    segments.add_argument("--limit", type=int, default=100)
+    segments.add_argument("--cursor")
+    segments.add_argument("--include-auxiliary", action="store_true")
+    segments.set_defaults(func=cmd_document_segments)
+
+    annotation = commands.add_parser("create-annotation", help="Preview or create a native PDF annotation")
+    annotation.add_argument("--attachment-key", required=True)
+    annotation.add_argument("--source-hash", required=True)
+    annotation.add_argument("--segment-id", required=True)
+    annotation.add_argument("--start", type=int, required=True)
+    annotation.add_argument("--end", type=int, required=True)
+    annotation.add_argument("--type", choices=["highlight", "underline"], default="highlight")
+    annotation.add_argument("--color", default="#ffd400")
+    annotation.add_argument("--comment")
+    annotation.add_argument("--tag", action="append")
+    annotation.add_argument("--yes", action="store_true")
+    annotation.set_defaults(func=cmd_create_annotation)
+
+    annotation_note = commands.add_parser(
+        "annotations-to-note", help="Preview or create a native Zotero note from annotations"
+    )
+    annotation_note.add_argument("--parent-item-key", required=True)
+    annotation_note.add_argument("--annotation-key", action="append", required=True)
+    annotation_note.add_argument("--order", choices=["document", "provided"], default="document")
+    annotation_note.add_argument("--no-comments", action="store_true")
+    annotation_note.add_argument("--no-header", action="store_true")
+    annotation_note.add_argument("--yes", action="store_true")
+    annotation_note.set_defaults(func=cmd_annotations_to_note)
 
     install_csl = commands.add_parser("install-csl", help="Validate, preview, and install a CSL file")
     install_csl.add_argument("--file", required=True)
