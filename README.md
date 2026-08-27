@@ -18,9 +18,15 @@ Zotero Modified 是一个面向 Zotero 10 的本地工作流工具。它以 [Ope
 | --- | --- |
 | 搜索本地 Zotero、导出 BibTeX、插入文内引用、读取已索引附件文本、导入 BibTeX/RIS | 支持 collection 修改与条目 CRUD |
 | 单条检索和引用工作流 | 批量修改字段、条目类型、tags 等结构化 metadata |
-| Zotero 10 本地 API 的原生范围 | 通过可选的 Zotero Modified Bridge 管理原生彩色标签、彩色 `/状态` 与 CSL 安装/卸载 |
+| Zotero 10 本地 API 的原生范围 | 通过可选的 Zotero Modified Bridge 管理原生彩色标签、彩色 `/状态`、CSL，以及实验性的 PDF 主动注释 |
 | 通用引用库操作 | 受控标签词表、1–5 重要性评分（`Extra` 中的 `rate: N`）、全库去重与批次级确认 |
 | 无特定文献整理模型 | 将“创建 collection → 获得文献列表 → 全库去重 → 一次确认 → Ethereal-compatible metadata 写入”串成完整工作流 |
+
+### 实验性主动注释
+
+Bridge 可以把 Structured Document Text（SDT）文本范围转换为 Zotero 原生 PDF highlight/underline。Zotero 10.0.1 的桌面 Reader 目前没有公开这项写入接口，因此当前主实现会调用经过功能探测的 Reader 私有 mapper 与 annotation manager。这个功能是**实验性的，可能在 Zotero 更新后失效**；不要把它视为 Zotero 承诺稳定的 API。
+
+Bridge 会在启动、`status`、`context` 和主动注释请求时检查兼容性。Zotero 版本离开已验证的 10.0.1、公开 `createAnnotationFromSDT` 出现、或所需私有方法缺失时，`status` 的 `modifiedBridge.compatibility.warnings` 会给出提醒，同时写入 Zotero 错误日志。公开接口实际进入稳定版后，应把它升级为首选实现，并仅把当前私有实现保留为 fallback。
 
 ### 标签与 metadata 约定
 
@@ -47,7 +53,7 @@ codex plugin add zotero-modified@zotero-modified-private
 ```
 
 2. 新建 Codex 任务并首先运行 `@Zotero Modified status --require-write`。若本地 API 或写入授权不可用，任务必须停在这里，不能先继续检索、去重或解析项目文件。运行 `authorize-write` 并在 Zotero 中选择 **Always Allow** 后，再次运行授权门槛。首次使用若 Bridge 尚未安装，Codex 会提醒你在 Zotero 的“插件/附加组件管理器”中手动安装匹配的 `dist\zotero-modified-bridge-<VERSION>.xpi`；该确认不能静默代办。
-3. Bridge 仅补足彩色标签、状态与 CSL 管理；基础 CRUD 不依赖它。授权门槛通过后，单个 collection、单条记录等非破坏性小写入不再单独询问。涉及多条文献的导入或 metadata 批次只汇总确认一次；删除仍遵守命令要求的精确确认。
+3. Bridge 补足彩色标签、状态、CSL 管理及实验性 PDF 主动注释；基础 CRUD 不依赖它。授权门槛通过后，单个 collection、单条记录等非破坏性小写入不再单独询问。涉及多条文献的导入或 metadata 批次只汇总确认一次；删除仍遵守命令要求的精确确认。
 
 ### 从 GitHub Release 安装、升级与卸载
 
@@ -163,9 +169,15 @@ Zotero Modified is a local workflow tool for Zotero 10. It builds on the search,
 | --- | --- |
 | Search local Zotero, export BibTeX, insert inline citations, read indexed attachment text, and import BibTeX/RIS | Collection changes and item CRUD |
 | Single-item search and citation workflows | Batch edits to fields, item types, tags, and other structured metadata |
-| Native Zotero 10 local API scope | Optional Zotero Modified Bridge for native colored tags, colored `/statuses`, and CSL installation/removal |
+| Native Zotero 10 local API scope | Optional Zotero Modified Bridge for native colored tags, colored `/statuses`, CSL, and experimental active PDF annotations |
 | General reference-library operations | Controlled tag vocabularies, 1–5 importance ratings (`rate: N` in `Extra`), full-library deduplication, and batch-scoped confirmation |
 | No dedicated literature-curation model | An end-to-end workflow: create collection → obtain literature list → deduplicate against the full library → confirm once → write Ethereal-compatible metadata |
+
+### Experimental active annotations
+
+The Bridge can convert Structured Document Text (SDT) ranges into native Zotero PDF highlights and underlines. Zotero 10.0.1's desktop Reader does not currently expose a public write API for this, so the primary implementation uses feature-detected private Reader mapper and annotation-manager methods. This feature is **experimental and may stop working after a Zotero update**; it is not a Zotero-supported stable API.
+
+The Bridge checks compatibility at startup and on `status`, `context`, and active-annotation requests. If Zotero moves beyond the tested 10.0.1 release, exposes public `createAnnotationFromSDT`, or removes a required private method, `status` reports the condition under `modifiedBridge.compatibility.warnings` and the Bridge writes the same warning to Zotero's error log. Once the public API reaches a stable Zotero release, it should become the primary implementation and this private adapter should remain only as a fallback.
 
 ### Tag and metadata conventions
 
@@ -198,8 +210,8 @@ and rerun the gate. On first use, if the Bridge is not installed, Codex must rem
 install the matching `dist\zotero-modified-bridge-<VERSION>.xpi` through Zotero’s Plugins/Add-ons
 Manager; it cannot silently perform that confirmation.
 
-3. The Bridge is needed only for colored tags/statuses and CSL operations; the standard Zotero 10
-local API handles basic CRUD. After the gate passes, small non-destructive writes proceed directly;
+3. The Bridge is needed for colored tags/statuses, CSL operations, and experimental active PDF
+annotations; the standard Zotero 10 local API handles basic CRUD. After the gate passes, small non-destructive writes proceed directly;
 multi-item imports or metadata batches receive one consolidated confirmation, while deletion keeps
 its exact confirmation requirements.
 
