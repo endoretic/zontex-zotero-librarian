@@ -505,48 +505,54 @@ function collectSDTSpans(node, ref, spans) {
   });
 }
 
+function isSDTLeafBlock(node) {
+  if (!node || typeof node.text === "string") return false;
+  if (!Array.isArray(node.content) || !node.content.length) return true;
+  return !node.content.some((child) => child && typeof child.text !== "string");
+}
+
 function materializedSDTSegments(document, includeAuxiliary = false) {
   const content = Array.isArray(document?.content)
     ? document.content
     : (Array.isArray(document?.content?.blocks) ? document.content.blocks : []);
-  return content.flatMap((block, index) => {
-    if (!includeAuxiliary && (block?.auxiliary || block?.isAuxiliary)) return [];
-    const blockRef = Array.isArray(block?.ref) ? block.ref : [index];
-    const spans = [];
-    collectSDTSpans(block, blockRef, spans);
-    const text = sdtText(block);
-    if (!text || !spans.length) return [];
-    return [{
-      id: `block:${blockRef.join(".")}`,
-      blockType: block?.blockType || block?.type || "block",
-      flowClass: block?.flowClass || null,
-      text,
-      locator: { kind: "sdt-block", blockRef },
-      spans,
-    }];
+  const segments = [];
+
+  function visit(node, ref, flowClass) {
+    if (!node || typeof node.text === "string") return;
+    if (isSDTLeafBlock(node)) {
+      const spans = [];
+      collectSDTSpans(node, ref, spans);
+      const text = sdtText(node);
+      if (text && spans.length) {
+        segments.push({
+          id: `block:${ref.join(".")}`,
+          blockType: node.blockType || node.type || "block",
+          flowClass: node.flowClass || flowClass || null,
+          text,
+          locator: { kind: "sdt-block", blockRef: ref },
+          spans,
+        });
+      }
+      return;
+    }
+    node.content.forEach((child, index) => {
+      if (child && typeof child.text !== "string") visit(child, [...ref, index], flowClass);
+    });
+  }
+
+  content.forEach((block, index) => {
+    const auxiliary = block?.auxiliary || block?.isAuxiliary || block?.flowClass === "excluded";
+    if (!includeAuxiliary && auxiliary) return;
+    visit(block, [index], block?.flowClass || null);
   });
+  return segments;
 }
 
 // SDT is a binary pack in Zotero. Keep decoding behind feature detection so a
 // Zotero build without the bundled SDT reader returns a capability error.
 async function loadSDTDocument(attachment) {
-  if (typeof Zotero.SDT?.getPack !== "function") return null;
-  const pack = await Zotero.SDT.getPack(attachment.id, { isPriority: true });
-  if (!pack) return null;
-  if (pack.content && pack.metadata) return pack;
-
-  let reader = null;
-  if (typeof Zotero.SDT.getReader === "function") {
-    try {
-      reader = await Zotero.SDT.getReader(pack);
-    }
-    catch (_) {
-      reader = await Zotero.SDT.getReader(attachment.id);
-    }
-  }
-  else if (typeof Zotero.SDT.Reader === "function") {
-    reader = new Zotero.SDT.Reader(pack);
-  }
+  if (typeof Zotero.SDT?.getReader !== "function") return null;
+  const reader = await Zotero.SDT.getReader(attachment.id, { isPriority: true });
   if (!reader) return null;
   if (typeof reader.materialize === "function") return await reader.materialize();
   return reader.document || reader;
@@ -647,14 +653,15 @@ function annotationJSON(annotation) {
   }
 }
 
-function findExactAnnotation(attachment, type, text, comment, color) {
-  return attachment.getAnnotations().find((annotation) => {
-    if (annotation.annotationType !== type) return false;
-    const json = annotationJSON(annotation);
-    return (json.text || "").normalize() === text.normalize()
-      && (json.comment || "") === comment
-      && (!color || json.color === color);
-  }) || null;
+function sameAnnotationPosition(annotation, expectedPosition) {
+  if (!expectedPosition) return false;
+  const position = annotationJSON(annotation).position;
+  return !!position && JSON.stringify(position) === JSON.stringify(expectedPosition);
+}
+
+function validSDTRefPath(value) {
+  return Array.isArray(value) && value.length > 0
+    && value.every((entry) => Number.isInteger(entry) && entry >= 0);
 }
 
 function sdtAnchorForRange(segment, start, end) {
@@ -707,8 +714,7 @@ function annotationsEndpointClass() {
         let sdtAnchor;
         let text = "";
         if (body.target?.kind === "sdt") {
-          if (!Array.isArray(body.target.start) || !Array.isArray(body.target.end)
-            || !body.target.start.length || !body.target.end.length) {
+          if (!validSDTRefPath(body.target.start) || !validSDTRefPath(body.target.end)) {
             return errorResponse(400, "invalid-sdt-target", "raw SDT targets require start and end RefPaths");
           }
           sdtAnchor = { start: body.target.start, end: body.target.end };
@@ -733,7 +739,20 @@ function annotationsEndpointClass() {
           sdtAnchor = sdtAnchorForRange(segment, target.start, target.end);
         }
 
-        const duplicate = text ? findExactAnnotation(active.attachment, type, text, comment, color) : null;
+        let expectedPosition = null;
+        if (text && typeof active.view?.sdtAnchorToPosition === "function") {
+          expectedPosition = await active.view.sdtAnchorToPosition(sdtAnchor);
+        }
+        const duplicate = text
+          ? active.attachment.getAnnotations().find((annotation) => {
+            if (!sameAnnotationPosition(annotation, expectedPosition)) return false;
+            if (annotation.annotationType !== type) return false;
+            const json = annotationJSON(annotation);
+            return (json.text || "").normalize() === text.normalize()
+              && (json.comment || "") === comment
+              && (!color || json.color === color);
+          }) || null
+          : null;
         if (duplicate) {
           return jsonResponse(200, {
             created: false,
@@ -753,7 +772,10 @@ function annotationsEndpointClass() {
         );
         const createdKey = created?.id || created?.key || null;
         const annotation = active.attachment.getAnnotations().find((item) => item.key === createdKey)
-          || (text ? findExactAnnotation(active.attachment, type, text, comment, color) : null);
+          || (text ? active.attachment.getAnnotations().find((item) => (
+            sameAnnotationPosition(item, expectedPosition)
+            && item.annotationType === type
+          )) : null);
         if (!annotation) {
           return errorResponse(500, "annotation-readback-failed", "Zotero did not expose the created annotation after the native write.", true);
         }
@@ -776,8 +798,11 @@ function annotationNoteEndpointClass() {
     async run(requestData) {
       try {
         const body = parseBody(this, requestData);
-        if (!Array.isArray(body.annotationKeys) || body.annotationKeys.length < 1 || body.annotationKeys.length > 50
-          || !body.annotationKeys.every((key) => typeof key === "string" && key.trim())) {
+        const annotationKeys = Array.isArray(body.annotationKeys)
+          ? body.annotationKeys.map((key) => typeof key === "string" ? key.trim() : "")
+          : null;
+        if (!annotationKeys || annotationKeys.length < 1 || annotationKeys.length > 50
+          || annotationKeys.some((key) => !key) || new Set(annotationKeys).size !== annotationKeys.length) {
           return errorResponse(400, "invalid-annotation-keys", "annotationKeys must contain 1–50 annotation keys");
         }
         if (typeof body.parentItemKey !== "string" || !body.parentItemKey.trim()) {
@@ -792,8 +817,11 @@ function annotationNoteEndpointClass() {
         if (!parent.isRegularItem?.() || !parent.isTopLevelItem?.()) {
           return errorResponse(422, "invalid-parent-item", "parentItemKey must identify a top-level regular item.");
         }
+        if (parent.deleted || (typeof parent.isEditable === "function" && !parent.isEditable())) {
+          return errorResponse(423, "library-read-only", "The parent item or library is read-only.", true);
+        }
         const annotations = [];
-        for (let key of body.annotationKeys) {
+        for (let key of annotationKeys) {
           const annotation = await itemByKey(requestData.libraryID, key);
           if (!annotation) return errorResponse(404, "annotation-not-found", `Annotation '${key}' was not found.`);
           if (!annotation.isAnnotation?.()) return errorResponse(422, "invalid-annotation", `Item '${key}' is not an annotation.`);
