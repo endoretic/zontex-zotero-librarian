@@ -163,6 +163,20 @@ class ZoteroManagerTests(unittest.TestCase):
         self.assertEqual(args.mode, "citation")
         args = parser.parse_args(["navigate", "--open-attachment", "PDF12345"])
         self.assertEqual(args.open_attachment, "PDF12345")
+        args = parser.parse_args([
+            "merge-items",
+            "--master",
+            "ABCD2345",
+            "--other",
+            "EFGH6789",
+            "--expected-version",
+            "ABCD2345=8",
+            "--expected-version",
+            "EFGH6789=3",
+        ])
+        self.assertEqual(args.master, "ABCD2345")
+        self.assertEqual(args.other, ["EFGH6789"])
+        self.assertEqual(args.expected_version, ["ABCD2345=8", "EFGH6789=3"])
 
     @mock.patch.object(zm, "api_get")
     @mock.patch.object(zm, "require_companion")
@@ -213,6 +227,58 @@ class ZoteroManagerTests(unittest.TestCase):
             zm.MODIFIED_NAVIGATE_PATH,
             {"action": "open-attachment", "itemKey": "PDF12345"},
             "POST Bridge navigate (open-attachment)",
+        )
+
+    def test_parse_expected_version_splits_on_the_last_equals(self):
+        self.assertEqual(
+            zm.parse_expected_version("KEY=WITH_EQUALS=8"),
+            ("KEY=WITH_EQUALS", 8),
+        )
+
+    @mock.patch.object(zm, "api_get")
+    def test_item_merge_prints_explicit_master_preview(self, api_get):
+        api_get.side_effect = [
+            {"data": {"key": "ABCD2345", "version": 8, "itemType": "book", "title": "Master"}},
+            {"data": {"key": "EFGH6789", "version": 3, "itemType": "book", "title": "Other"}},
+        ]
+        args = argparse.Namespace(
+            master="ABCD2345",
+            other=["EFGH6789"],
+            expected_version=["ABCD2345=8", "EFGH6789=3"],
+            yes=False,
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zm.cmd_merge_items(args)
+        preview = json.loads(output.getvalue())
+        self.assertFalse(preview["committed"])
+        self.assertEqual(preview["master"]["key"], "ABCD2345")
+        self.assertEqual(preview["others"][0]["title"], "Other")
+
+    @mock.patch.object(zm, "bridge_post")
+    @mock.patch.object(zm, "api_get")
+    def test_item_merge_commits_native_request(self, api_get, bridge_post):
+        api_get.side_effect = [
+            {"data": {"key": "ABCD2345", "version": 8, "itemType": "book", "title": "Master"}},
+            {"data": {"key": "EFGH6789", "version": 3, "itemType": "book", "title": "Other"}},
+        ]
+        bridge_post.return_value = {"merged": True}
+        args = argparse.Namespace(
+            master="ABCD2345",
+            other=["EFGH6789"],
+            expected_version=["ABCD2345=8", "EFGH6789=3"],
+            yes=True,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            zm.cmd_merge_items(args)
+        bridge_post.assert_called_once_with(
+            zm.MODIFIED_ITEM_MERGE_PATH,
+            {
+                "master": "ABCD2345",
+                "others": ["EFGH6789"],
+                "expectedVersions": {"ABCD2345": 8, "EFGH6789": 3},
+            },
+            "POST Bridge item merge",
         )
 
     def test_invalid_field_is_rejected_before_write(self):

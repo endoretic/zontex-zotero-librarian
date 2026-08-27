@@ -41,6 +41,7 @@ The colored-tag/status and CSL commands require the separately installed Zotero 
 - Resolve any current/selected/open Zotero referent with `context` first; do not infer it from conversation history. It reports library-tab selection separately from the active Reader.
 - `render` is a read-only native Zotero CSL preview. Use it after `install-csl` when iterating on citation or bibliography output.
 - `navigate` is a non-persistent UI side effect for revealing an item or opening an attachment/annotation. It must use explicit keys and does not claim visual readback beyond the requested target.
+- `merge-items` is a high-impact native merge. Present one consolidated preview with the explicit master, other items, titles, item types, and exact object versions; run with `--yes` only after confirmation. Only top-level regular items are accepted, and the Bridge verifies every version immediately before calling Zotero's native merge module.
 - The Bridge remains a thin privileged layer: ordinary item/collection/tag/note CRUD stays on the stock Local API, and no generic execution endpoint or Reader UI hook is allowed.
 
 ## Release updates
@@ -80,6 +81,7 @@ python scripts/zotero_modified.py create-status --name reading --color "#4C9AFF"
 python scripts/zotero_modified.py set-status --collection-name BN5001 --expect-count 37 --name /reading --yes
 python scripts/zotero_modified.py set-rating --item-key ABCD2345 --value 5 --yes
 python scripts/zotero_modified.py colored-tags
+python scripts/zotero_modified.py merge-items --master ABCD2345 --other EFGH6789 --expected-version ABCD2345=8 --expected-version EFGH6789=3
 python scripts/zotero_modified.py install-csl --file .\my-style.csl
 python scripts/update_release.py
 python scripts/update_release.py --apply --yes --reinstall-codex
