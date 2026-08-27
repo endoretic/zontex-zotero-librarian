@@ -246,9 +246,11 @@ function tagRenameEndpointClass() {
         if (!impact.tagID) return errorResponse(404, "tag-not-found", `Tag '${from}' was not found.`);
         if (impact.itemIDs.length !== count) return tagCountMismatch(from, count, impact.itemIDs.length);
 
+        const targetImpact = await tagImpact(requestData.libraryID, to);
+        const targetExists = !!targetImpact.tagID;
         const targetColor = tagColor(requestData.libraryID, to);
         await Zotero.Tags.rename(requestData.libraryID, from, to);
-        if (targetColor) await restoreTagColor(requestData.libraryID, to, targetColor);
+        if (targetExists) await restoreTagColor(requestData.libraryID, to, targetColor);
         return jsonResponse(200, {
           renamed: true,
           from,
@@ -297,6 +299,8 @@ function tagMergeEndpointClass() {
           return errorResponse(423, "library-read-only", "The Zotero library is not editable.");
         }
 
+        const targetImpact = await tagImpact(requestData.libraryID, into);
+        const targetExists = !!targetImpact.tagID;
         const targetColor = tagColor(requestData.libraryID, into);
         const impacts = [];
         const affectedItems = new Set();
@@ -315,7 +319,11 @@ function tagMergeEndpointClass() {
 
         for (const source of impacts) {
           await Zotero.Tags.rename(requestData.libraryID, source.name, into);
-          await restoreTagColor(requestData.libraryID, into, targetColor || fallbackColor);
+          await restoreTagColor(
+            requestData.libraryID,
+            into,
+            targetExists ? targetColor : fallbackColor
+          );
         }
         return jsonResponse(200, {
           merged: true,
