@@ -95,7 +95,7 @@ function readerCapabilities(view, type) {
   const annotationFromSDT = typeof view?.createAnnotationFromSDT === "function";
   const pdfAnnotations = type === "pdf" && annotationFromSDT;
   return {
-    sdt: annotationFromSDT,
+    sdt: typeof Zotero.SDT?.getReader === "function",
     createAnnotationFromSDT: annotationFromSDT,
     highlight: pdfAnnotations,
     underline: pdfAnnotations,
@@ -137,14 +137,33 @@ async function activeReaderRecord() {
 }
 
 function parseBody(endpoint, requestData) {
-  let body = endpoint._parseJSONBody(requestData.data);
+  let body;
+  try {
+    body = endpoint._parseJSONBody(requestData.data);
+  }
+  catch (_) {
+    const error = new Error("Request body must contain valid JSON");
+    error.bridgeStatus = 400;
+    error.bridgeCode = "invalid-request";
+    throw error;
+  }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new Error("Request body must be a JSON object");
+    const error = new Error("Request body must be a JSON object");
+    error.bridgeStatus = 400;
+    error.bridgeCode = "invalid-request";
+    throw error;
   }
   return body;
 }
 
 function internalError(error, message = "Unexpected Zotero Modified Bridge error") {
+  if (Number.isInteger(error?.bridgeStatus)) {
+    return errorResponse(
+      error.bridgeStatus,
+      error.bridgeCode || "invalid-request",
+      error.message || "The request is invalid."
+    );
+  }
   Zotero.logError(error);
   return errorResponse(500, "internal-error", message, true);
 }
