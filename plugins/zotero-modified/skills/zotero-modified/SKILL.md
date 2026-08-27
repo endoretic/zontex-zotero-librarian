@@ -1,11 +1,11 @@
 ---
 name: zotero-modified
-description: Safely manage a personal Zotero 10 library with local CRUD, structured metadata edits, colored-tag/status/rating conventions, and CSL installation. Unofficial and private-use only.
+description: Safely manage a personal Zotero 10 library with local CRUD, structured metadata edits, colored-tag/status/rating conventions, CSL installation, and experimental native PDF annotations. Unofficial and private-use only.
 ---
 
 # Zotero Modified
 
-Use this skill when a user asks to read or modify a personal Zotero library, apply slash-status/rating conventions, or create and install a CSL citation style. This is an unofficial, private-use adaptation; it is not affiliated with Zotero or Ethereal Style.
+Use this skill when a user asks to read or modify a personal Zotero library, apply slash-status/rating conventions, create native PDF annotations, or create and install a CSL citation style. This is an unofficial, private-use adaptation; it is not affiliated with Zotero or Ethereal Style.
 
 ## Authorization and confirmation workflow
 
@@ -21,7 +21,7 @@ The script stores the local write key in the current Windows user's local applic
 ## First-install handoff and cleanup
 
 - `status` is also the first-install check. If `modifiedBridge.manualInstallRequired` is true, explicitly tell the user that Zotero requires a one-time manual action: open Zotero's Plugins/Add-ons Manager, choose **Install Add-on From File**, select the matching release XPI, restart Zotero, then start a new Codex task and run `status` again. Do not claim that Codex can silently install the XPI or bypass Zotero's confirmation UI.
-- The Bridge is optional for basic collection/item CRUD but required for native colored tags/statuses and CSL installation. State this distinction when the Bridge is absent.
+- The Bridge is optional for basic collection/item CRUD but required for native colored tags/statuses, CSL installation, and active PDF annotations. State this distinction when the Bridge is absent.
 - After `status` confirms `modifiedBridge.available: true`, clean up installer artifacts that Codex created or downloaded for this first installation: the release ZIP, a downloaded or copied XPI installer, copied checksum/release-note files, and scratch extraction or staging directories. Keep the stable marketplace directory, Git checkouts, backups, Zotero profile files, and all unrelated user files. Never delete a pre-existing user-supplied installer without explicit approval, and report every path removed.
 
 ## Data conventions
@@ -34,11 +34,13 @@ The script stores the local write key in the current Windows user's local applic
 - Before creating topical tags, inspect existing tags with `python scripts/zotero.py tags`. Reuse the controlled vocabulary and never generate one unique AI tag per item.
 - Do not add journal names, impact factors, journal tiers, or easyScholar metadata unless the user explicitly changes the project scope.
 
-The colored-tag/status and CSL commands require the separately installed Zotero Modified Bridge XPI. Basic collection/item CRUD uses Zotero 10's stock authorized local API.
+The colored-tag/status, CSL, and active-annotation commands require the separately installed Zotero Modified Bridge XPI. Basic collection/item CRUD uses Zotero 10's stock authorized local API.
 
 ## Zotero Modified Bridge vNext
 
 - Resolve any current/selected/open Zotero referent with `context` first; do not infer it from conversation history. It reports library-tab selection separately from the active Reader.
+- Active PDF annotation is experimental. The current Zotero 10.0.1 implementation uses feature-detected private Reader mapper/manager methods and may break after a Zotero update.
+- Surface every entry in `modifiedBridge.compatibility.warnings` returned by the required `status` gate. Before `create-annotation`, call `context`, report any `reader.capabilities.annotation.warnings`, and require the requested `highlight`/`underline` capability plus a non-empty annotation backend; otherwise stop without attempting the write. Version or newly available standard-API warnings are advisory when the effective backend remains compatible and do not require another confirmation.
 - `render` is a read-only native Zotero CSL preview. Use it after `install-csl` when iterating on citation or bibliography output.
 - `navigate` is a non-persistent UI side effect for revealing an item or opening an attachment/annotation. It must use explicit keys and does not claim visual readback beyond the requested target.
 - The Bridge remains a thin privileged layer: ordinary item/collection/tag/note CRUD stays on the stock Local API, and no generic execution endpoint or Reader UI hook is allowed.
@@ -84,6 +86,10 @@ python scripts/zotero_modified.py set-status --collection-name BN5001 --expect-c
 python scripts/zotero_modified.py set-rating --item-key ABCD2345 --value 5 --yes
 python scripts/zotero_modified.py colored-tags
 python scripts/zotero_modified.py install-csl --file .\my-style.csl
+python scripts/zotero_modified.py context
+python scripts/zotero_modified.py document-segments --attachment-key ABCD2345
+python scripts/zotero_modified.py create-annotation --attachment-key ABCD2345 --source-hash "SOURCE_HASH_FROM_DOCUMENT_SEGMENTS" --segment-id block:5 --start 0 --end 18 --type highlight --yes
+python scripts/zotero_modified.py annotations-to-note --parent-item-key ABCD2345 --annotation-key EFGH6789 --order document --yes
 python scripts/update_release.py
 python scripts/update_release.py --apply --yes --reinstall-codex
 ```
