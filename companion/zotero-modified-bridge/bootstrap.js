@@ -352,7 +352,7 @@ function renderEndpointClass() {
         if (!["citation", "bibliography"].includes(body.mode)) {
           return errorResponse(400, "invalid-mode", "mode must be citation or bibliography");
         }
-        if (body.locale !== undefined && (typeof body.locale !== "string"
+        if (body.locale !== undefined && body.locale !== "" && (typeof body.locale !== "string"
           || !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(body.locale))) {
           return errorResponse(400, "invalid-locale", "locale must be a BCP-47-like value");
         }
