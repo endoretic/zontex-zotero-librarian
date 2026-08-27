@@ -136,6 +136,15 @@ test("render sends citation mode through Zotero QuickCopy", async () => {
   assert.equal(responseBody(result).text, "(Example, 2026)");
 });
 
+test("render accepts the helper's empty default locale", async () => {
+  const item = makeItem("ITEM0001");
+  const { api } = loadBridge({ items: new Map([[item.key, item]]) });
+  const result = await endpoint(api.renderEndpointClass(), {
+    itemKeys: [item.key], style: "style", locale: "", mode: "bibliography",
+  });
+  assert.equal(result[0], 200);
+});
+
 test("render rejects missing items without calling QuickCopy", async () => {
   let called = false;
   const { api } = loadBridge({
