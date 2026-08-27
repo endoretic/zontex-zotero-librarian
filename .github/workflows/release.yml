@@ -6,7 +6,9 @@ on:
     paths:
       - "plugins/zontex/scripts/**"
       - "plugins/zontex/skills/**"
+      - "plugins/zontex/.codex-plugin/plugin.json"
       - "companion/zontex-bridge/bootstrap.js"
+      - "companion/zontex-bridge/manifest.json"
       - "scripts/build_release.py"
       - "scripts/release_policy.py"
   workflow_dispatch:
@@ -53,25 +55,45 @@ jobs:
         run: |
           python -m unittest discover -s tests -v
           python -m unittest discover -s plugins/zontex/tests -v
+          node tests/bridge_contract.test.cjs
           node --check companion/zontex-bridge/bootstrap.js
 
-      - name: Determine initial release
+      - name: Determine release version strategy
         if: steps.policy.outputs.release_kind == 'patch'
-        id: initial
+        id: version_strategy
+        env:
+          EXPLICIT_VERSION: ${{ steps.policy.outputs.explicit_version }}
         shell: bash
         run: |
-          if git tag --list 'v*' | grep -q .; then
-            echo "value=false" >> "$GITHUB_OUTPUT"
+          plugin_version=$(python -c "import json; print(json.load(open('plugins/zontex/.codex-plugin/plugin.json'))['version'])")
+          bridge_version=$(python -c "import json; print(json.load(open('companion/zontex-bridge/manifest.json'))['version'])")
+          if [[ "$plugin_version" != "$bridge_version" ]]; then
+            echo "Plugin and bridge versions must match." >&2
+            exit 1
+          fi
+
+          if [[ "$EXPLICIT_VERSION" == "true" ]]; then
+            if git rev-parse -q --verify "refs/tags/v${plugin_version}" >/dev/null; then
+              echo "Explicit release v${plugin_version} already exists." >&2
+              exit 1
+            fi
+            latest=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+            if [[ -n "$latest" ]]; then
+              python -c 'import sys; parse=lambda value: tuple(map(int, value.split("."))); current=parse(sys.argv[1]); latest=parse(sys.argv[2]); current > latest or sys.exit(f"Explicit release {sys.argv[1]} must be newer than {sys.argv[2]}")' "$plugin_version" "${latest#v}"
+            fi
+            echo "use_current=true" >> "$GITHUB_OUTPUT"
+          elif git tag --list 'v*' | grep -q .; then
+            echo "use_current=false" >> "$GITHUB_OUTPUT"
           else
-            echo "value=true" >> "$GITHUB_OUTPUT"
+            echo "use_current=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Bump paired patch version
-        if: steps.policy.outputs.release_kind == 'patch' && steps.initial.outputs.value == 'false'
+        if: steps.policy.outputs.release_kind == 'patch' && steps.version_strategy.outputs.use_current == 'false'
         run: python scripts/bump_version.py patch --github-output "$GITHUB_OUTPUT"
 
       - name: Commit release version
-        if: steps.policy.outputs.release_kind == 'patch' && steps.initial.outputs.value == 'false'
+        if: steps.policy.outputs.release_kind == 'patch' && steps.version_strategy.outputs.use_current == 'false'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"

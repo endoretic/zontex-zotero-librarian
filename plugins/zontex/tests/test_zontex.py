@@ -89,7 +89,7 @@ class ZontexTests(unittest.TestCase):
         }
         args = batch_args(
             set_values=["title=New title"],
-            add_tags=["Project/BN5001"],
+            add_tags=["Project/SDT Review"],
             replace_tags=["Old=New"],
             add_collection_keys=["COLL0002"],
         )
@@ -97,7 +97,7 @@ class ZontexTests(unittest.TestCase):
         self.assertEqual(patch["title"], "New title")
         self.assertEqual(
             patch["tags"],
-            [{"tag": "Role/Method"}, {"tag": "New"}, {"tag": "Project/BN5001"}],
+            [{"tag": "Role/Method"}, {"tag": "New"}, {"tag": "Project/SDT Review"}],
         )
         self.assertEqual(patch["collections"], ["COLL0001", "COLL0002"])
         self.assertNotIn("extra", patch)
@@ -147,16 +147,16 @@ class ZontexTests(unittest.TestCase):
         csl = """<?xml version="1.0" encoding="utf-8"?>
 <style xmlns="http://purl.org/net/xbiblio/csl" version="1.0">
   <info>
-    <title>BN5001 Numeric</title>
-    <id>http://www.zotero.org/styles/bn5001-numeric</id>
+    <title>SDT Review Numeric</title>
+    <id>http://www.zotero.org/styles/sdt-review-numeric</id>
   </info>
   <citation><layout><text variable="title"/></layout></citation>
 </style>"""
         self.assertEqual(
             zontex.find_csl_metadata(csl),
             {
-                "id": "http://www.zotero.org/styles/bn5001-numeric",
-                "title": "BN5001 Numeric",
+                "id": "http://www.zotero.org/styles/sdt-review-numeric",
+                "title": "SDT Review Numeric",
             },
         )
 
@@ -167,7 +167,7 @@ class ZontexTests(unittest.TestCase):
         args = parser.parse_args(["set-rating", "--item-key", "ABCD2345", "--value", "5"])
         self.assertEqual(args.value, 5)
         self.assertEqual(args.item_key, ["ABCD2345"])
-        args = parser.parse_args(["clear-status", "--collection-name", "BN5001"])
+        args = parser.parse_args(["clear-status", "--collection-name", "SDT Review"])
         self.assertIsNone(args.name)
         args = parser.parse_args([
             "render",
@@ -597,13 +597,13 @@ class ZontexTests(unittest.TestCase):
         resolve_collection.return_value = {
             "key": "KJE93R7T",
             "version": 12,
-            "name": "BN5001",
+            "name": "SDT Review",
             "parentCollection": False,
         }
         args = argparse.Namespace(
             collection_key="KJE93R7T",
             current_name=None,
-            name="BN5001 Review",
+            name="SDT Review Archive",
             yes=False,
         )
         output = io.StringIO()
@@ -611,7 +611,7 @@ class ZontexTests(unittest.TestCase):
             zontex.cmd_rename_collection(args)
         preview = json.loads(output.getvalue())
         self.assertFalse(preview["committed"])
-        self.assertEqual(preview["after"], "BN5001 Review")
+        self.assertEqual(preview["after"], "SDT Review Archive")
 
 
 if __name__ == "__main__":

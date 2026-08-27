@@ -60,7 +60,7 @@ The colored-tag/status, CSL, and active-annotation commands require the separate
 
 ## Literature-list curation protocol
 
-Use this sequence when the user wants a collection built from a literature list. The completed collection should follow the same structural model as BN5001 while adapting the topical vocabulary to the new research theme.
+Use this sequence when the user wants a collection built from a literature list. The completed collection should follow the default Zontex metadata structure while adapting the topical vocabulary to the user's research theme.
 
 1. Pass `status --require-write` before doing anything else. If it fails, stop at the authorization problem.
 2. Create or resolve the target collection. Creating one empty collection is a small write and does not require a separate confirmation after the gate passes.
@@ -80,11 +80,11 @@ Use this sequence when the user wants a collection built from a literature list.
 python scripts/zontex.py status --require-write
 python scripts/zontex.py authorize-write
 python scripts/zontex.py collections
-python scripts/zontex.py backup-collection --collection-name BN5001 --file .\BN5001-backup.json
-python scripts/zontex.py rename-collection --current-name BN5001 --name "BN5001 Review" --yes
-python scripts/zontex.py batch-update-items --collection-name BN5001 --expect-count 37 --set language=en --yes
+python scripts/zontex.py backup-collection --collection-name "SDT Review" --file .\sdt-review-backup.json
+python scripts/zontex.py rename-collection --current-name "SDT Review" --name "SDT Methods Review" --yes
+python scripts/zontex.py batch-update-items --collection-name "SDT Review" --expect-count 24 --set language=en --yes
 python scripts/zontex.py create-status --name reading --color "#4C9AFF" --yes
-python scripts/zontex.py set-status --collection-name BN5001 --expect-count 37 --name /reading --yes
+python scripts/zontex.py set-status --collection-name "SDT Review" --expect-count 24 --name /reading --yes
 python scripts/zontex.py set-rating --item-key ABCD2345 --value 5 --yes
 python scripts/zontex.py colored-tags
 python scripts/zontex.py rename-tag --from "Old tag" --to "New tag" --expect-count 12
