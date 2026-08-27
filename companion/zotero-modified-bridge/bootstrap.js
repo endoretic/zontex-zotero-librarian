@@ -548,13 +548,13 @@ function itemMergeEndpointClass() {
           if (typeof item.isEditable === "function" && !item.isEditable()) {
             return errorResponse(423, "item-read-only", `Item '${key}' is not editable.`);
           }
-          if (Number(item.version) !== body.expectedVersions[key]) {
+          if (Number(item.clientVersion) !== body.expectedVersions[key]) {
             return errorResponse(
               412,
               "item-version-changed",
               `Item '${key}' changed since the preview.`,
               true,
-              { key, expectedVersion: body.expectedVersions[key], actualVersion: item.version }
+              { key, expectedVersion: body.expectedVersions[key], actualVersion: item.clientVersion }
             );
           }
           items.push(item);
@@ -600,7 +600,7 @@ function itemMergeEndpointClass() {
         }
         return jsonResponse(200, {
           merged: true,
-          master: { key: master.key, version: master.version },
+          master: { key: master.key, version: master.clientVersion },
           trashed,
         });
       }

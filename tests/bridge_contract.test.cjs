@@ -12,6 +12,7 @@ function makeItem(key, overrides = {}) {
     key,
     itemType: overrides.itemType || "journalArticle",
     version: overrides.version ?? 1,
+    clientVersion: overrides.clientVersion ?? overrides.version ?? 1,
     deleted: false,
     parentItemID: null,
     attachmentReaderType: null,
@@ -222,7 +223,7 @@ test("native merge commits through Zotero's module and verifies readback", async
           masterState.collections.push(...otherState.collections);
           masterState.attachments.push(...otherState.attachments);
           masterState.notes.push(...otherState.notes);
-          target.version++;
+          target.clientVersion++;
           others.forEach((item) => { item.deleted = true; });
         },
       }),
