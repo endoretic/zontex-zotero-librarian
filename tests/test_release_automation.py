@@ -125,6 +125,26 @@ class ReleaseAutomationTests(unittest.TestCase):
         self.assertIn("version: bridgeVersion", bootstrap)
         self.assertNotIn('version: "0.1.0"', bootstrap)
 
+    def test_codex_plugin_exposes_and_guards_experimental_annotations(self) -> None:
+        plugin = json.loads(
+            (ROOT / "plugins/zotero-modified/.codex-plugin/plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        skill = (ROOT / "plugins/zotero-modified/skills/zotero-modified/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("PDF annotations", plugin["interface"]["shortDescription"])
+        self.assertTrue(
+            any(
+                "highlight or underline" in prompt
+                for prompt in plugin["interface"]["defaultPrompt"]
+            )
+        )
+        self.assertIn("modifiedBridge.compatibility.warnings", skill)
+        self.assertIn("reader.capabilities.annotation.warnings", skill)
+        self.assertIn("Active PDF annotation is experimental", skill)
+
     def test_release_updater_rejects_nonstable_versions_and_unsafe_archives(self) -> None:
         self.assertEqual(RELEASE_UPDATER.version_key("1.2.3"), (1, 2, 3))
         with self.assertRaises(RELEASE_UPDATER.UpdateError):
