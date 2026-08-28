@@ -1,6 +1,6 @@
 {
   "name": "zontex",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Research library workflows for Codex and Zotero, including safe curation, metadata, citation styles, and experimental native PDF annotations.",
   "author": {
     "name": "EndoReticulum"

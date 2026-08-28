@@ -112,6 +112,8 @@ Zontex 能识别你当前选中的条目或正在阅读的 PDF，按指定样式
 
 主动创建 PDF 注释目前是实验性功能。Zotero 10.0.1 尚无公开的桌面写入接口，当前主路径会先做能力探测，再使用 Reader 私有 mapper 与 annotation manager；版本或接口变化可能使其失效。`status` 与 `context` 会返回兼容性提醒，未来公开接口出现后应改为主路径，现有实现只保留为 fallback。
 
+删除注释是回收站策略的例外。删除目标中包含注释时，Zontex 会先停止操作并提示：“注意：注释删除后无法恢复。如需删除，请回复确认。确认后，其他条目将移入回收站，注释将永久删除。”用户确认后，同一批普通条目进入回收站，注释则按精确 key 永久删除；如果普通条目移入回收站失败，Zontex 不会继续删除注释。直接删除论文或 PDF 仍使用 Zotero 原生回收站及其父子级联逻辑。
+
 #### CSL 管理
 
 通过 Bridge 调用 Zotero 样式管理器安装 CSL，并用原生渲染结果验证 citation 与 bibliography 输出。
@@ -266,6 +268,8 @@ tag, and then collect this paper's annotations into a single note.
 ```
 
 Creating PDF annotations is currently experimental. Zotero 10.0.1 does not expose a public desktop write API for this operation, so the primary path first detects capabilities and then uses private Reader mapper and annotation-manager APIs. Zotero or private-API changes may break this path. `status` and `context` return compatibility warnings. Once a public API becomes available, it should become the primary path and the current implementation should remain only as a fallback.
+
+Annotation deletion is the exception to the normal Trash policy. When a deletion target contains annotations, Zontex stops before making changes and warns that annotations cannot be restored. After the user confirms, ordinary items in the same batch go to Trash, while only the exact annotation keys are permanently deleted. If moving an ordinary item to Trash fails, Zontex does not proceed with annotation deletion. Deleting a paper or PDF directly continues to use Zotero's native Trash and parent-child cascade behavior.
 
 #### CSL management
 

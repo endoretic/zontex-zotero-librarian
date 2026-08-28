@@ -244,6 +244,163 @@ class ZontexTests(unittest.TestCase):
         self.assertEqual(args.master, "ABCD2345")
         self.assertEqual(args.other, ["EFGH6789"])
         self.assertEqual(args.expected_version, ["ABCD2345=8", "EFGH6789=3"])
+        args = parser.parse_args([
+            "trash-items",
+            "--item-key",
+            "ANN12345",
+            "--expect-count",
+            "1",
+            "--confirm",
+            "DELETE-PERMANENTLY",
+            "--yes",
+        ])
+        self.assertEqual(args.confirm, "DELETE-PERMANENTLY")
+
+    @mock.patch.object(zontex, "authorized_request")
+    @mock.patch.object(zontex, "commit_item_patches")
+    @mock.patch.object(zontex, "select_items")
+    def test_trash_items_requires_confirmation_before_mixed_deletion(
+        self, select_items, commit_item_patches, authorized_request
+    ):
+        select_items.return_value = [
+            {
+                "key": "ANN12345",
+                "version": 8,
+                "itemType": "annotation",
+                "parentItem": "PDF12345",
+            },
+            {
+                "key": "PAPER123",
+                "version": 4,
+                "itemType": "journalArticle",
+                "title": "Keep the batch atomic",
+            },
+        ]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zontex.cmd_trash_items(argparse.Namespace(yes=True, confirm=None))
+        preview = json.loads(output.getvalue())
+        self.assertFalse(preview["committed"])
+        self.assertEqual(preview["trashCount"], 1)
+        self.assertEqual(preview["permanentDeleteAnnotationCount"], 1)
+        self.assertIn("注释删除后无法恢复", preview["confirmationPrompt"]["zh-CN"])
+        self.assertEqual(preview["requiredConfirmation"], "DELETE-PERMANENTLY")
+        commit_item_patches.assert_not_called()
+        authorized_request.assert_not_called()
+
+    @mock.patch.object(zontex, "authorized_request")
+    @mock.patch.object(zontex, "commit_item_patches")
+    @mock.patch.object(zontex, "select_items")
+    def test_trash_items_annotation_only_uses_short_warning_then_deletes(
+        self, select_items, commit_item_patches, authorized_request
+    ):
+        select_items.return_value = [
+            {"key": "ANN12345", "version": 8, "itemType": "annotation"}
+        ]
+        authorized_request.return_value = zontex.Response(status=204, headers={}, text="")
+
+        preview_output = io.StringIO()
+        with contextlib.redirect_stdout(preview_output):
+            zontex.cmd_trash_items(argparse.Namespace(yes=True, confirm=None))
+        preview = json.loads(preview_output.getvalue())
+        self.assertEqual(
+            preview["confirmationPrompt"]["zh-CN"],
+            "注意：注释删除后无法恢复。如需删除，请回复确认。",
+        )
+        commit_item_patches.assert_not_called()
+        authorized_request.assert_not_called()
+
+        committed_output = io.StringIO()
+        with contextlib.redirect_stdout(committed_output):
+            zontex.cmd_trash_items(
+                argparse.Namespace(yes=True, confirm="DELETE-PERMANENTLY")
+            )
+        commit_item_patches.assert_not_called()
+        authorized_request.assert_called_once()
+        self.assertEqual(
+            json.loads(committed_output.getvalue())["deletedAnnotationKeys"],
+            ["ANN12345"],
+        )
+
+    @mock.patch.object(zontex, "authorized_request")
+    @mock.patch.object(zontex, "commit_item_patches", return_value=([{"key": "PAPER123"}], {}))
+    @mock.patch.object(zontex, "select_items")
+    def test_trash_items_confirms_then_trashes_ordinary_and_deletes_annotation(
+        self, select_items, commit_item_patches, authorized_request
+    ):
+        select_items.return_value = [
+            {
+                "key": "ANN12345",
+                "version": 8,
+                "itemType": "annotation",
+                "parentItem": "PDF12345",
+            },
+            {
+                "key": "PAPER123",
+                "version": 4,
+                "itemType": "journalArticle",
+                "title": "Mixed deletion",
+            },
+        ]
+        authorized_request.return_value = zontex.Response(status=204, headers={}, text="")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zontex.cmd_trash_items(
+                argparse.Namespace(yes=True, confirm="DELETE-PERMANENTLY")
+            )
+        planned = commit_item_patches.call_args.args[0]
+        self.assertEqual([row["key"] for row in planned], ["PAPER123"])
+        self.assertEqual(planned[0]["patch"], {"deleted": 1})
+        authorized_request.assert_called_once_with(
+            f"{zontex.LOCAL_USER}/items/ANN12345",
+            method="DELETE",
+            data=None,
+            headers={"If-Unmodified-Since-Version": "8"},
+        )
+        result = json.loads(output.getvalue())
+        self.assertTrue(result["committed"])
+        self.assertEqual(result["deletedAnnotationKeys"], ["ANN12345"])
+
+    @mock.patch.object(zontex, "authorized_request")
+    @mock.patch.object(
+        zontex,
+        "commit_item_patches",
+        return_value=([], {"PAPER123": {"error": "write failed"}}),
+    )
+    @mock.patch.object(zontex, "select_items")
+    def test_trash_items_skips_annotation_deletion_when_trash_write_fails(
+        self, select_items, commit_item_patches, authorized_request
+    ):
+        select_items.return_value = [
+            {"key": "ANN12345", "version": 8, "itemType": "annotation"},
+            {"key": "PAPER123", "version": 4, "itemType": "journalArticle"},
+        ]
+        output = io.StringIO()
+        with self.assertRaises(SystemExit) as raised, contextlib.redirect_stdout(output):
+            zontex.cmd_trash_items(
+                argparse.Namespace(yes=True, confirm="DELETE-PERMANENTLY")
+            )
+        self.assertEqual(raised.exception.code, 2)
+        self.assertTrue(json.loads(output.getvalue())["annotationDeletionSkipped"])
+        authorized_request.assert_not_called()
+
+    @mock.patch.object(zontex, "commit_item_patches", return_value=([], {}))
+    @mock.patch.object(zontex, "select_items")
+    def test_trash_items_keeps_normal_item_behavior(self, select_items, commit_item_patches):
+        select_items.return_value = [
+            {
+                "key": "PAPER123",
+                "version": 4,
+                "itemType": "journalArticle",
+                "title": "Ordinary item",
+            }
+        ]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            zontex.cmd_trash_items(argparse.Namespace(yes=True, confirm=None))
+        planned = commit_item_patches.call_args.args[0]
+        self.assertEqual(planned[0]["patch"], {"deleted": 1})
+        self.assertTrue(json.loads(output.getvalue())["committed"])
 
     @mock.patch.object(zontex, "api_get")
     @mock.patch.object(zontex, "require_companion")

@@ -1066,26 +1066,93 @@ def cmd_delete_status(args: argparse.Namespace) -> None:
 
 def cmd_trash_items(args: argparse.Namespace) -> None:
     items = select_items(args)
+    annotations = [data for data in items if data.get("itemType") == "annotation"]
     planned = [
         make_simple_patch(data, {"deleted": 1})
         for data in items
-        if not data.get("deleted")
+        if data.get("itemType") != "annotation" and not data.get("deleted")
     ]
     preview = {
         "action": "trash-items",
         "selectedCount": len(items),
-        "changedCount": len(planned),
+        "changedCount": len(planned) + len(annotations),
+        "trashCount": len(planned),
+        "permanentDeleteAnnotationCount": len(annotations),
         "committed": False,
-        "items": [{"key": row["key"], "title": row["title"]} for row in planned],
+        "items": [
+            {
+                "key": data.get("key"),
+                "title": data.get("title"),
+                "itemType": data.get("itemType"),
+                "disposition": (
+                    "delete-permanently"
+                    if data.get("itemType") == "annotation"
+                    else "trash"
+                ),
+            }
+            for data in items
+        ],
     }
-    if not args.yes or not planned:
+    if annotations:
+        preview["confirmationPrompt"] = {
+            "zh-CN": (
+                "注意：注释删除后无法恢复。如需删除，请回复确认。确认后，其他条目将移入"
+                "回收站，注释将永久删除。"
+                if planned
+                else "注意：注释删除后无法恢复。如需删除，请回复确认。"
+            ),
+            "en": (
+                "Warning: Deleted annotations cannot be restored. Confirm to continue. Other "
+                "items will be moved to Trash, while annotations will be permanently deleted."
+                if planned
+                else "Warning: Deleted annotations cannot be restored. Confirm to continue."
+            ),
+        }
+        preview["requiredConfirmation"] = "DELETE-PERMANENTLY"
+    if (
+        not args.yes
+        or (annotations and getattr(args, "confirm", None) != "DELETE-PERMANENTLY")
+        or not (planned or annotations)
+    ):
         dump_json(preview)
         return
-    responses, failed = commit_item_patches(planned)
-    preview.update({"committed": True, "responses": responses, "failed": failed})
-    dump_json(preview)
+
+    responses, failed = commit_item_patches(planned) if planned else ([], {})
     if failed:
+        preview.update(
+            {
+                "committed": True,
+                "responses": responses,
+                "failed": failed,
+                "annotationDeletionSkipped": bool(annotations),
+            }
+        )
+        dump_json(preview)
         raise SystemExit(2)
+
+    deleted_annotation_keys: list[str] = []
+    for data in annotations:
+        key = str(data.get("key"))
+        require_ok(
+            authorized_request(
+                f"{LOCAL_USER}/items/{urllib.parse.quote(key)}",
+                method="DELETE",
+                data=None,
+                headers={"If-Unmodified-Since-Version": str(data.get("version"))},
+            ),
+            f"DELETE annotation {key}",
+        )
+        deleted_annotation_keys.append(key)
+
+    preview.update(
+        {
+            "committed": True,
+            "responses": responses,
+            "failed": failed,
+            "deletedAnnotationKeys": deleted_annotation_keys,
+        }
+    )
+    dump_json(preview)
 
 
 def cmd_delete_items(args: argparse.Namespace) -> None:
@@ -1753,6 +1820,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     trash_items = commands.add_parser("trash-items", help="Preview or move items to Zotero trash")
     add_item_selector(trash_items)
+    trash_items.add_argument("--confirm")
     trash_items.add_argument("--yes", action="store_true")
     trash_items.set_defaults(func=cmd_trash_items)
 
