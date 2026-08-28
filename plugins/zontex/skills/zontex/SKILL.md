@@ -14,7 +14,7 @@ Use this skill when a user asks to read or modify a personal Zotero library, app
 3. After the authorization gate passes, read-only work and small, non-destructive writes do not need another user confirmation. Invoke the relevant command with `--yes`; do not first run its no-`--yes` preview unless the user asked for a preview or per-step audit.
 4. Before a multi-item import or metadata/tag/status batch, present one consolidated decision summary with the target collection, candidate and duplicate counts, intended metadata policy, and exact expected item count. Obtain one confirmation for the whole agreed batch, then execute its commands with `--yes` and `--expect-count` without repeated authorization prompts or command-by-command previews.
 5. If the requested scope expands materially after that confirmation, treat the added scope as a new batch and ask once more. A user's explicit request for per-step audit overrides the streamlined path.
-6. Destructive operations remain exceptions: prefer trash over permanent deletion, and always honor the exact confirmation required for permanent item deletion and collection/status deletion.
+6. Destructive operations remain exceptions. Prefer Trash for ordinary items, but never send annotations to Trash because Zotero can hide a deleted annotation behind live parent rows. If a `trash-items` target contains annotations, stop before every write and tell the user in their language: “注意：注释删除后无法恢复。如需删除，请回复确认。确认后，其他条目将移入回收站，注释将永久删除。” Omit the last sentence when there are no ordinary items. After the user explicitly confirms, rerun the same exact selection with `--expect-count N --confirm DELETE-PERMANENTLY --yes`; `trash-items` will move ordinary items to Trash and permanently delete only the exact annotation keys. Do not ask the user to type the internal confirmation token. Always honor the exact confirmation required for other permanent item, collection, and status deletions.
 
 The script stores the local write key in the current Windows user's local application-data directory, not in the repository.
 
@@ -86,6 +86,7 @@ python scripts/zontex.py batch-update-items --collection-name "SDT Review" --exp
 python scripts/zontex.py create-status --name reading --color "#4C9AFF" --yes
 python scripts/zontex.py set-status --collection-name "SDT Review" --expect-count 24 --name /reading --yes
 python scripts/zontex.py set-rating --item-key ABCD2345 --value 5 --yes
+python scripts/zontex.py trash-items --item-key PAPER123 --item-key ANN12345 --expect-count 2 --confirm DELETE-PERMANENTLY --yes
 python scripts/zontex.py colored-tags
 python scripts/zontex.py rename-tag --from "Old tag" --to "New tag" --expect-count 12
 python scripts/zontex.py merge-tags --source "Old tag=12" --source "Legacy=3" --into "New tag"

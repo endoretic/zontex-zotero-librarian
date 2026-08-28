@@ -210,6 +210,8 @@ class ReleaseAutomationTests(unittest.TestCase):
         self.assertIn("zontexBridge.compatibility.warnings", skill)
         self.assertIn("reader.capabilities.annotation.warnings", skill)
         self.assertIn("Active PDF annotation is experimental", skill)
+        self.assertIn("never send annotations to Trash", skill)
+        self.assertIn("注释删除后无法恢复", skill)
 
     def test_release_updater_rejects_nonstable_versions_and_unsafe_archives(self) -> None:
         self.assertEqual(RELEASE_UPDATER.version_key("1.2.3"), (1, 2, 3))
