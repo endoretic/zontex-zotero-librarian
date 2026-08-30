@@ -840,6 +840,7 @@ function documentSegmentsEndpointClass() {
         const limit = Number(query.get("limit") || 100);
         const cursor = Number(query.get("cursor") || 0);
         const includeAuxiliary = query.get("includeAuxiliary") === "1";
+        const verbose = query.get("verbose") === "1";
         if (!Number.isInteger(limit) || limit < 1 || limit > 500
           || !Number.isInteger(cursor) || cursor < 0) {
           return errorResponse(400, "invalid-pagination", "limit must be 1–500 and cursor must be a non-negative integer");
@@ -852,7 +853,10 @@ function documentSegmentsEndpointClass() {
           return errorResponse(501, "sdt-unavailable", "Structured Document Text is unavailable in this Zotero build.", true);
         }
         const allSegments = materializedSDTSegments(document, includeAuxiliary);
-        const segments = allSegments.slice(cursor, cursor + limit);
+        const page = allSegments.slice(cursor, cursor + limit);
+        const segments = verbose
+          ? page
+          : page.map(({ id, blockType, flowClass, text }) => ({ id, blockType, flowClass, text }));
         const next = cursor + segments.length < allSegments.length ? String(cursor + segments.length) : null;
         return jsonResponse(200, {
           attachment: { key: active.attachment.key, libraryID: active.attachment.libraryID },
@@ -870,6 +874,20 @@ function documentSegmentsEndpointClass() {
       }
     }
   };
+}
+
+function annotationTagNames(annotation, json = annotationJSON(annotation)) {
+  let values = Array.isArray(json?.tags) ? json.tags : [];
+  if (!values.length && typeof annotation.getTags === "function") {
+    try {
+      values = annotation.getTags();
+    }
+    catch (_) {}
+  }
+  return [...new Set(values
+    .map((value) => typeof value === "string" ? value : (value?.tag || value?.name))
+    .filter((value) => typeof value === "string" && value.trim())
+    .map((value) => value.trim().normalize()))].sort();
 }
 
 function annotationRecord(annotation, attachmentKey) {
@@ -890,6 +908,7 @@ function annotationRecord(annotation, attachmentKey) {
     pageLabel: json.pageLabel || annotation.annotationPageLabel || null,
     sortIndex: json.sortIndex || annotation.annotationSortIndex || null,
     position: json.position || null,
+    tags: annotationTagNames(annotation, json),
   };
 }
 
@@ -1062,6 +1081,11 @@ function annotationsEndpointClass() {
         }
         const tags = body.tags === undefined ? [] : normalizeStringArray(body.tags);
         if (!tags) return errorResponse(400, "invalid-tags", "tags must contain at most 20 unique strings of 100 characters");
+        const expectedText = body.expectedText;
+        if (expectedText !== undefined
+          && (typeof expectedText !== "string" || !expectedText.length)) {
+          return errorResponse(400, "invalid-expected-text", "expectedText must be a non-empty string");
+        }
 
         const active = await activePDFAttachment(requestData.libraryID, attachmentKey.trim());
         if (active.response) return active.response;
@@ -1086,6 +1110,14 @@ function annotationsEndpointClass() {
         if (!segment) return errorResponse(404, "segment-not-found", "The requested document segment was not found.");
         if (target.end > segment.text.length) return errorResponse(400, "invalid-target", "target end exceeds segment text length");
         const text = segment.text.slice(target.start, target.end);
+        if (expectedText !== undefined && text !== expectedText) {
+          return errorResponse(
+            412,
+            "target-text-mismatch",
+            "The exact target text changed; refetch segments and rebuild the target.",
+            true
+          );
+        }
         const sdtAnchor = sdtAnchorForRange(segment, target.start, target.end);
 
         const built = await buildPrivateSDTAnnotation(active, sdtAnchor, type, text);
@@ -1097,7 +1129,9 @@ function annotationsEndpointClass() {
             const json = annotationJSON(annotation);
             return (json.text || "").normalize() === text.normalize()
               && (json.comment || "") === comment
-              && (!color || json.color === color);
+              && (!color || json.color === color)
+              && JSON.stringify(annotationTagNames(annotation, json))
+                === JSON.stringify([...tags].sort());
           }) || null
           : null;
         if (duplicate) {

@@ -9,7 +9,7 @@ Use this skill when a user asks to read or modify a personal Zotero library, app
 
 ## Authorization and confirmation workflow
 
-1. The first Zotero action in every task must be `python scripts/zontex.py status --require-write`. Do not inspect collections, search the library, parse project sources, or continue other project work before this gate passes.
+1. If a task may write to Zotero, its first Zotero action must be `python scripts/zontex.py status --require-write`. A strictly read-only task may start with `status`, but must pass `status --require-write` before any later mutation. Local project-file inspection does not depend on this Zotero gate.
 2. If the local API is unavailable, writes are unsupported, or a cached write authorization is absent, stop immediately. Tell the user what failed. Run `authorize-write` only to obtain the missing key, tell the user to choose **Always Allow** when persistent automation is desired, and rerun `status --require-write` before resuming.
 3. After the authorization gate passes, read-only work and small, non-destructive writes do not need another user confirmation. Invoke the relevant command with `--yes`; do not first run its no-`--yes` preview unless the user asked for a preview or per-step audit.
 4. Before a multi-item import or metadata/tag/status batch, present one consolidated decision summary with the target collection, candidate and duplicate counts, intended metadata policy, and exact expected item count. Obtain one confirmation for the whole agreed batch, then execute its commands with `--yes` and `--expect-count` without repeated authorization prompts or command-by-command previews.
@@ -46,9 +46,22 @@ The colored-tag/status, CSL, and active-annotation commands require the separate
 - `rename-tag` and `merge-tags` are library-wide, high-impact writes. Present one consolidated summary of source/target names, expected affected-item counts, and native colors; run with `--yes` only after that explicit confirmation. The Bridge rechecks every count immediately before mutation and preserves the target color.
 - `merge-items` is a high-impact native merge. Present one consolidated preview with the explicit master, other items, titles, item types, and exact object versions; run with `--yes` only after confirmation. Only top-level regular items are accepted, and the Bridge verifies every version immediately before calling Zotero's native merge module.
 - The Bridge remains a thin privileged layer: ordinary item/collection/tag/note CRUD stays on the stock Local API, and no generic execution endpoint or Reader UI hook is allowed.
-- `document-segments` reads active PDF SDT leaf blocks as lossless, exact-offset segments. Use `segmentId` with a `[start,end)` range; never retry a stale locator after `412 document-changed`.
-- `create-annotation` is limited to active PDF Reader + native SDT + highlight/underline. Use it directly for one or two explicitly requested annotations; autonomous batches require one consolidated confirmation first.
+- `document-segments` reads active PDF SDT leaf blocks as lossless, exact-offset segments. Its default output omits internal spans; use `--verbose` only when those locators are actually needed. Use `segmentId` with a UTF-16 `[start,end)` range; never retry a stale locator after `412 document-changed`.
+- `create-annotation` is limited to active PDF Reader + native SDT + highlight/underline. Always pass the exact selected text with `--expected-text`; a mismatch stops before the write. Use it directly for one or two explicitly requested annotations.
 - `annotations-to-note` uses Zotero's native annotation-to-note path. Validate that all annotations belong to the requested parent item; classification and prose remain outside the Bridge.
+
+### Fast annotation workflow
+
+Use this path for three or more annotations on one unchanged active PDF. It removes repeated tool work; it does not lower the evidence or safety standard.
+
+1. Pass the status gate once, resolve the active attachment with `context`, surface compatibility warnings, and require the requested annotation capability/backend.
+2. Read `document-segments` once. Freeze its attachment key and `sourceHash`; do not repeatedly refetch unchanged text.
+3. Build one manifest with unique `clientId` and target ranges plus exact `expectedText`, type, color, comment, and tags. Offsets are JavaScript UTF-16 code units. Analyze disjoint sections in parallel only when that genuinely saves time.
+4. Present one consolidated summary and obtain one confirmation for the complete batch. If user waiting may have changed the UI, call `context` once more and require the same attachment and backend.
+5. Run one `create-annotations --file ... --expect-count N --yes` command. It validates the whole manifest first, then calls the existing single-annotation route sequentially in one process and performs one consolidated Local API readback.
+6. On `412`, Reader/attachment change, uncertain transport outcome, partial completion, or failed readback, stop and report created, duplicate, failed, and not-attempted client IDs. Never replay the whole manifest, reuse stale locators, or automatically delete created annotations.
+
+Use the single command or a per-step audit when there are only one or two targets, the passages remain ambiguous, or the user explicitly requests independent review.
 
 ## Release updates
 
@@ -94,7 +107,8 @@ python scripts/zontex.py merge-items --master ABCD2345 --other EFGH6789 --expect
 python scripts/zontex.py install-csl --file .\my-style.csl
 python scripts/zontex.py context
 python scripts/zontex.py document-segments --attachment-key ABCD2345
-python scripts/zontex.py create-annotation --attachment-key ABCD2345 --source-hash "SOURCE_HASH_FROM_DOCUMENT_SEGMENTS" --segment-id block:5 --start 0 --end 18 --type highlight --yes
+python scripts/zontex.py create-annotation --attachment-key ABCD2345 --source-hash "SOURCE_HASH_FROM_DOCUMENT_SEGMENTS" --segment-id block:5 --start 0 --end 18 --expected-text "Exact quoted text" --type highlight --yes
+python scripts/zontex.py create-annotations --file .\annotations.json --expect-count 12 --yes
 python scripts/zontex.py annotations-to-note --parent-item-key ABCD2345 --annotation-key EFGH6789 --order document --yes
 python scripts/update_release.py
 python scripts/update_release.py --apply --yes --reinstall-codex

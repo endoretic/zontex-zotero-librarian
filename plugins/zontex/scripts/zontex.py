@@ -18,6 +18,8 @@ import os
 import platform
 import re
 import sys
+import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -315,8 +317,9 @@ def authorized_request(
     method: str,
     data: Any,
     headers: dict[str, str] | None = None,
+    server: dict[str, Any] | None = None,
 ) -> Response:
-    server = server_info()
+    server = server or server_info()
     server_id = server.get("serverID")
     if not server_id:
         exit_with("The running Zotero instance did not report a Zotero-Server-ID")
@@ -1285,6 +1288,8 @@ def cmd_document_segments(args: argparse.Namespace) -> None:
         params["attachmentKey"] = args.attachment_key
     if args.include_auxiliary:
         params["includeAuxiliary"] = "1"
+    if args.verbose:
+        params["verbose"] = "1"
     dump_json(api_get(f"{ZONTEX_DOCUMENT_SEGMENTS_PATH}?{urllib.parse.urlencode(params)}"))
 
 
@@ -1293,6 +1298,7 @@ def cmd_create_annotation(args: argparse.Namespace) -> None:
         "attachmentKey": args.attachment_key,
         "sourceHash": args.source_hash,
         "target": {"segmentId": args.segment_id, "start": args.start, "end": args.end},
+        "expectedText": args.expected_text,
         "type": args.type,
         "color": args.color,
         "comment": args.comment or "",
@@ -1306,6 +1312,320 @@ def cmd_create_annotation(args: argparse.Namespace) -> None:
         ZONTEX_ANNOTATIONS_PATH, body, "POST Bridge annotation"
     )})
     dump_json(preview)
+
+
+def read_annotation_manifest(path: str) -> Any:
+    label = "stdin" if path == "-" else path
+    try:
+        raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        exit_with(f"Could not read annotation manifest {label}: {exc}")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        exit_with(f"Invalid annotation manifest {label}: {exc}")
+
+
+def utf16_length(value: str) -> int:
+    return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+
+
+def validate_annotation_manifest(value: Any, expect_count: int) -> dict[str, Any]:
+    if not isinstance(value, dict) or value.get("schemaVersion") != 1:
+        exit_with("Annotation manifest must be an object with schemaVersion 1")
+    attachment_key = value.get("attachmentKey")
+    source_hash = value.get("sourceHash")
+    rows = value.get("annotations")
+    if not isinstance(attachment_key, str) or not attachment_key.strip():
+        exit_with("Annotation manifest attachmentKey is required")
+    if not isinstance(source_hash, str) or not source_hash:
+        exit_with("Annotation manifest sourceHash is required")
+    if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_BATCH:
+        exit_with(f"Annotation manifest must contain 1–{MAX_BATCH} annotations")
+    if expect_count < 1 or expect_count > MAX_BATCH:
+        exit_with(f"--expect-count must be between 1 and {MAX_BATCH}")
+    if len(rows) != expect_count:
+        exit_with(
+            f"Expected {expect_count} manifest annotations, found {len(rows)}; no changes made"
+        )
+
+    client_ids: set[str] = set()
+    targets: set[tuple[str, int, int]] = set()
+    annotations: list[dict[str, Any]] = []
+    for index, raw in enumerate(rows):
+        label = f"annotations[{index}]"
+        if not isinstance(raw, dict):
+            exit_with(f"{label} must be an object")
+        client_id = raw.get("clientId")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id) > 100:
+            exit_with(f"{label}.clientId must be a non-empty string of at most 100 characters")
+        client_id = client_id.strip()
+        if client_id in client_ids:
+            exit_with(f"Duplicate annotation clientId: {client_id}")
+        client_ids.add(client_id)
+
+        target = raw.get("target")
+        if not isinstance(target, dict):
+            exit_with(f"{label}.target must be an object")
+        segment_id = target.get("segmentId")
+        start = target.get("start")
+        end = target.get("end")
+        if (
+            not isinstance(segment_id, str)
+            or not segment_id.strip()
+            or type(start) is not int
+            or type(end) is not int
+            or start < 0
+            or end <= start
+        ):
+            exit_with(f"{label}.target must contain segmentId and a non-empty [start,end) range")
+        segment_id = segment_id.strip()
+        target_key = (segment_id, start, end)
+        if target_key in targets:
+            exit_with(f"Duplicate annotation target in manifest: {segment_id}[{start},{end})")
+        targets.add(target_key)
+
+        expected_text = raw.get("expectedText")
+        if not isinstance(expected_text, str) or not expected_text:
+            exit_with(f"{label}.expectedText must be a non-empty string")
+        if utf16_length(expected_text) != end - start:
+            exit_with(
+                f"{label}.expectedText must span exactly {end - start} UTF-16 code units"
+            )
+
+        annotation_type = raw.get("type", "highlight")
+        if annotation_type not in {"highlight", "underline"}:
+            exit_with(f"{label}.type must be highlight or underline")
+        color = raw.get("color", "#ffd400")
+        if not isinstance(color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+            exit_with(f"{label}.color must use #RRGGBB syntax")
+        comment = raw.get("comment", "")
+        if not isinstance(comment, str) or utf16_length(comment) > 4000:
+            exit_with(f"{label}.comment must be at most 4000 UTF-16 code units")
+        raw_tags = raw.get("tags", [])
+        if not isinstance(raw_tags, list) or len(raw_tags) > 20:
+            exit_with(f"{label}.tags must contain at most 20 strings")
+        tags: list[str] = []
+        for tag in raw_tags:
+            if not isinstance(tag, str):
+                exit_with(f"{label}.tags must contain only strings")
+            tag = unicodedata.normalize("NFC", tag.strip())
+            if not tag or utf16_length(tag) > 100:
+                exit_with(
+                    f"{label}.tags must contain non-empty strings of at most 100 UTF-16 code units"
+                )
+            if tag not in tags:
+                tags.append(tag)
+
+        annotations.append(
+            {
+                "clientId": client_id,
+                "target": {"segmentId": segment_id, "start": start, "end": end},
+                "expectedText": expected_text,
+                "type": annotation_type,
+                "color": color,
+                "comment": comment,
+                "tags": tags,
+            }
+        )
+    return {
+        "schemaVersion": 1,
+        "attachmentKey": attachment_key.strip(),
+        "sourceHash": source_hash,
+        "annotations": annotations,
+    }
+
+
+def annotation_manifest_preview(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action": "create-annotations",
+        "attachmentKey": manifest["attachmentKey"],
+        "sourceHash": manifest["sourceHash"],
+        "annotationCount": len(manifest["annotations"]),
+        "annotations": [
+            {
+                "clientId": row["clientId"],
+                "target": row["target"],
+                "type": row["type"],
+                "color": row["color"],
+                "expectedTextLength": utf16_length(row["expectedText"]),
+                "commentPresent": bool(row["comment"]),
+                "tagCount": len(row["tags"]),
+            }
+            for row in manifest["annotations"]
+        ],
+        "committed": False,
+    }
+
+
+def annotation_tag_names(data: dict[str, Any]) -> list[str]:
+    names = []
+    for value in data.get("tags", []):
+        if isinstance(value, str):
+            name = value
+        elif isinstance(value, dict):
+            name = value.get("tag")
+        else:
+            name = None
+        if isinstance(name, str) and name.strip():
+            names.append(unicodedata.normalize("NFC", name.strip()))
+    return sorted(set(names))
+
+
+def annotation_verification_mismatches(
+    manifest: dict[str, Any],
+    results: list[dict[str, Any]],
+    children: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows_by_client = {row["clientId"]: row for row in manifest["annotations"]}
+    children_by_key = {str(row.get("key")): row for row in children if row.get("key")}
+    mismatches = []
+    for result in results:
+        row = rows_by_client[result["clientId"]]
+        child = children_by_key.get(result["key"])
+        fields = []
+        if child is None:
+            fields.append("key")
+        else:
+            if child.get("itemType") != "annotation":
+                fields.append("itemType")
+            if child.get("parentItem") != manifest["attachmentKey"]:
+                fields.append("parentItem")
+            if child.get("annotationType") != row["type"]:
+                fields.append("type")
+            if child.get("annotationText") != row["expectedText"]:
+                fields.append("text")
+            if child.get("annotationComment", "") != row["comment"]:
+                fields.append("comment")
+            if str(child.get("annotationColor", "")).casefold() != row["color"].casefold():
+                fields.append("color")
+            if annotation_tag_names(child) != sorted(row["tags"]):
+                fields.append("tags")
+        if fields:
+            mismatches.append(
+                {"clientId": result["clientId"], "key": result["key"], "fields": fields}
+            )
+    return mismatches
+
+
+def cmd_create_annotations(args: argparse.Namespace) -> None:
+    started = time.perf_counter()
+    manifest = validate_annotation_manifest(
+        read_annotation_manifest(args.file),
+        args.expect_count,
+    )
+    validated = time.perf_counter()
+    preview = annotation_manifest_preview(manifest)
+    if not args.yes:
+        if args.timings:
+            preview["timingsMs"] = {
+                "validation": round((validated - started) * 1000, 1),
+                "total": round((time.perf_counter() - started) * 1000, 1),
+            }
+        dump_json(preview)
+        return
+
+    require_companion()
+    server = server_info()
+    setup = time.perf_counter()
+    results: list[dict[str, Any]] = []
+    failed: dict[str, Any] | None = None
+    posts = 0
+    for row in manifest["annotations"]:
+        body = {
+            "attachmentKey": manifest["attachmentKey"],
+            "sourceHash": manifest["sourceHash"],
+            "target": row["target"],
+            "expectedText": row["expectedText"],
+            "type": row["type"],
+            "color": row["color"],
+            "comment": row["comment"],
+            "tags": row["tags"],
+        }
+        response = authorized_request(
+            ZONTEX_ANNOTATIONS_PATH,
+            method="POST",
+            data=body,
+            server=server,
+        )
+        posts += 1
+        payload = parse_body(response)
+        annotation = payload.get("annotation") if isinstance(payload, dict) else None
+        key = annotation.get("key") if isinstance(annotation, dict) else None
+        created = isinstance(payload, dict) and payload.get("created") is True
+        duplicate = isinstance(payload, dict) and payload.get("duplicate") is True
+        if not response.ok or not isinstance(key, str) or not key or not (created or duplicate):
+            if isinstance(payload, dict):
+                error = payload.get("error") or "invalid-response"
+                message = payload.get("message") or "Zotero returned an unexpected annotation response"
+            else:
+                error = "transport-uncertain" if response.status is None else "invalid-response"
+                message = response.error or "Zotero returned an unexpected annotation response"
+            failed = {
+                "clientId": row["clientId"],
+                "status": "failed",
+                "httpStatus": response.status,
+                "error": error,
+                "message": message,
+            }
+            break
+        results.append(
+            {
+                "clientId": row["clientId"],
+                "status": "created" if created else "duplicate",
+                "key": key,
+                "page": annotation.get("pageLabel"),
+            }
+        )
+    writes_finished = time.perf_counter()
+
+    verification = {"ok": True, "checked": len(results), "mismatches": []}
+    final_readbacks = 0
+    if results:
+        final_readbacks = 1
+        try:
+            annotations = items_by_keys([row["key"] for row in results])
+            mismatches = annotation_verification_mismatches(manifest, results, annotations)
+            verification.update({"ok": not mismatches, "mismatches": mismatches})
+        except SystemExit as exc:
+            verification.update({"ok": False, "error": str(exc)})
+    verified = time.perf_counter()
+    not_attempted = [
+        row["clientId"]
+        for row in manifest["annotations"][len(results) + (1 if failed else 0):]
+    ]
+    output = {
+        **preview,
+        "committed": True,
+        "counts": {
+            "requested": len(manifest["annotations"]),
+            "created": sum(row["status"] == "created" for row in results),
+            "duplicate": sum(row["status"] == "duplicate" for row in results),
+            "failed": int(failed is not None),
+            "notAttempted": len(not_attempted),
+        },
+        "results": [*results, *([failed] if failed else [])],
+        "notAttempted": not_attempted,
+        "verification": verification,
+        "callCounts": {
+            "companionChecks": 1,
+            "serverChecks": 1,
+            "annotationPosts": posts,
+            "finalReadbacks": final_readbacks,
+        },
+    }
+    output.pop("annotations", None)
+    if args.timings:
+        output["timingsMs"] = {
+            "validation": round((validated - started) * 1000, 1),
+            "setup": round((setup - validated) * 1000, 1),
+            "writes": round((writes_finished - setup) * 1000, 1),
+            "verification": round((verified - writes_finished) * 1000, 1),
+            "total": round((verified - started) * 1000, 1),
+        }
+    dump_json(output)
+    if failed or not verification["ok"]:
+        raise SystemExit(2)
 
 
 def cmd_annotations_to_note(args: argparse.Namespace) -> None:
@@ -1489,6 +1809,18 @@ def item_children(item_key: str) -> list[dict[str, Any]]:
     value = api_get(f"{LOCAL_USER}/items/{urllib.parse.quote(item_key)}/children")
     if not isinstance(value, list):
         exit_with(f"Unexpected Zotero child-item shape for: {item_key}")
+    return [data_of(row) for row in value]
+
+
+def items_by_keys(item_keys: list[str]) -> list[dict[str, Any]]:
+    if not 1 <= len(item_keys) <= MAX_BATCH:
+        exit_with(f"Readback requires 1–{MAX_BATCH} item keys")
+    query = urllib.parse.urlencode(
+        {"itemKey": ",".join(item_keys), "limit": len(item_keys)}
+    )
+    value = api_get(f"{LOCAL_USER}/items?{query}")
+    if not isinstance(value, list):
+        exit_with("Unexpected Zotero multi-item readback shape")
     return [data_of(row) for row in value]
 
 
@@ -1857,6 +2189,7 @@ def build_parser() -> argparse.ArgumentParser:
     segments.add_argument("--limit", type=int, default=100)
     segments.add_argument("--cursor")
     segments.add_argument("--include-auxiliary", action="store_true")
+    segments.add_argument("--verbose", action="store_true")
     segments.set_defaults(func=cmd_document_segments)
 
     annotation = commands.add_parser("create-annotation", help="Preview or create a native PDF annotation")
@@ -1865,12 +2198,23 @@ def build_parser() -> argparse.ArgumentParser:
     annotation.add_argument("--segment-id", required=True)
     annotation.add_argument("--start", type=int, required=True)
     annotation.add_argument("--end", type=int, required=True)
+    annotation.add_argument("--expected-text", required=True)
     annotation.add_argument("--type", choices=["highlight", "underline"], default="highlight")
     annotation.add_argument("--color", default="#ffd400")
     annotation.add_argument("--comment")
     annotation.add_argument("--tag", action="append")
     annotation.add_argument("--yes", action="store_true")
     annotation.set_defaults(func=cmd_create_annotation)
+
+    annotations = commands.add_parser(
+        "create-annotations",
+        help="Preview or sequentially create annotations from one manifest",
+    )
+    annotations.add_argument("--file", required=True, help="Manifest JSON path, or - for stdin")
+    annotations.add_argument("--expect-count", type=int, required=True)
+    annotations.add_argument("--timings", action="store_true")
+    annotations.add_argument("--yes", action="store_true")
+    annotations.set_defaults(func=cmd_create_annotations)
 
     annotation_note = commands.add_parser(
         "annotations-to-note", help="Preview or create a native Zotero note from annotations"
