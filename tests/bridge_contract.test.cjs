@@ -323,6 +323,45 @@ test("SDT materialization emits one segment per leaf block", () => {
   assert.equal(api.materializedSDTSegments(document, true).length, 3);
 });
 
+test("document segments are compact by default and verbose on request", async () => {
+  const attachment = makeItem("PDF00001", { id: 77, libraryID: 1 });
+  const document = {
+    metadata: { source: { hash: "hash" } },
+    content: [{ type: "paragraph", flowClass: "body", content: [{ text: "Hello" }] }],
+  };
+  const reader = {
+    itemID: 77,
+    type: "pdf",
+    _initPromise: Promise.resolve(),
+    _internalReader: { _primaryView: { initializedPromise: Promise.resolve() } },
+  };
+  const { api } = loadBridge({
+    items: new Map([[attachment.key, attachment]]),
+    Zotero: {
+      SDT: { getReader: async () => ({ materialize: async () => document }) },
+      getMainWindow: () => ({ Zotero_Tabs: { selectedType: "reader", selectedID: "tab" } }),
+      Reader: { getByTabID: () => reader },
+    },
+  });
+  const compact = await endpoint(api.documentSegmentsEndpointClass(), null, {
+    searchParams: new URLSearchParams({ attachmentKey: attachment.key }),
+  });
+  assert.equal(compact[0], 200);
+  assert.deepEqual(JSON.parse(JSON.stringify(responseBody(compact).segments[0])), {
+    id: "block:0",
+    blockType: "paragraph",
+    flowClass: "body",
+    text: "Hello",
+  });
+
+  const verbose = await endpoint(api.documentSegmentsEndpointClass(), null, {
+    searchParams: new URLSearchParams({ attachmentKey: attachment.key, verbose: "1" }),
+  });
+  assert.equal(verbose[0], 200);
+  assert.equal(responseBody(verbose).segments[0].locator.kind, "sdt-block");
+  assert.equal(responseBody(verbose).segments[0].spans.length, 1);
+});
+
 test("annotation endpoint rejects the internal raw RefPath shape", async () => {
   const attachment = makeItem("PDF00001", {
     id: 77,
@@ -347,6 +386,7 @@ test("annotation endpoint rejects the internal raw RefPath shape", async () => {
   const result = await endpoint(api.annotationsEndpointClass(), {
     attachmentKey: attachment.key,
     type: "highlight",
+    expectedText: "Hello",
     target: { kind: "sdt", start: [0, -1], end: [0, 2] },
   });
   assert.equal(result[0], 400);
@@ -357,8 +397,9 @@ test("annotation deduplication includes the native source position", async () =>
   const annotations = [];
   const existing = makeItem("OLD00001", { annotationType: "highlight" });
   const trashed = makeItem("TRASH001", { annotationType: "highlight", deleted: true });
+  const tagged = makeItem("TAG00001", { annotationType: "highlight" });
   const created = makeItem("NEW00001");
-  annotations.push(existing, trashed);
+  annotations.push(existing, trashed, tagged);
   const attachment = makeItem("PDF00001", {
     id: 77,
     libraryID: 1,
@@ -372,6 +413,7 @@ test("annotation deduplication includes the native source position", async () =>
   const positions = {
     OLD00001: { pageIndex: 0 },
     TRASH001: { pageIndex: 1, rects: [[1.234, 2, 3, 4]] },
+    TAG00001: { pageIndex: 1, rects: [[1.234, 2, 3, 4]] },
     NEW00001: { pageIndex: 1 },
   };
   let addCalls = 0;
@@ -417,6 +459,9 @@ test("annotation deduplication includes the native source position", async () =>
           comment: "",
           color: "#ffd400",
           position: positions[annotation.key],
+          tags: annotation.key === tagged.key
+            ? [{ name: "Other" }]
+            : (annotation.key === created.key ? [{ tag: "Method" }] : []),
         }),
       },
       getMainWindow: () => ({ Zotero_Tabs: { selectedType: "reader", selectedID: "tab" } }),
@@ -427,16 +472,31 @@ test("annotation deduplication includes the native source position", async () =>
     attachmentKey: attachment.key,
     sourceHash: "stale-hash",
     type: "highlight",
+    expectedText: "Hello",
     target: { segmentId: "block:0", start: 0, end: 5 },
   });
   assert.equal(stale[0], 412);
   assert.equal(responseBody(stale).error, "document-changed");
   assert.equal(addCalls, 0);
 
+  const changed = await endpoint(api.annotationsEndpointClass(), {
+    attachmentKey: attachment.key,
+    sourceHash: "hash",
+    type: "highlight",
+    expectedText: "World",
+    tags: ["Method"],
+    target: { segmentId: "block:0", start: 0, end: 5 },
+  });
+  assert.equal(changed[0], 412);
+  assert.equal(responseBody(changed).error, "target-text-mismatch");
+  assert.equal(addCalls, 0);
+
   const result = await endpoint(api.annotationsEndpointClass(), {
     attachmentKey: attachment.key,
     sourceHash: "hash",
     type: "highlight",
+    expectedText: "Hello",
+    tags: ["Method"],
     target: { segmentId: "block:0", start: 0, end: 5 },
   });
   assert.equal(result[0], 200);
@@ -444,6 +504,7 @@ test("annotation deduplication includes the native source position", async () =>
   assert.equal(responseBody(result).annotation.key, "NEW00001");
   assert.equal(responseBody(result).annotation.type, "highlight");
   assert.equal(responseBody(result).annotation.text, "Hello");
+  assert.deepEqual(JSON.parse(JSON.stringify(responseBody(result).annotation.tags)), ["Method"]);
   assert.deepEqual(
     JSON.parse(JSON.stringify(responseBody(result).annotation.position)),
     { pageIndex: 1, rects: [[1.23449, 2, 3, 4]] },
@@ -454,6 +515,7 @@ test("annotation deduplication includes the native source position", async () =>
     attachmentKey: attachment.key,
     sourceHash: "hash",
     type: "highlight",
+    tags: ["Method"],
     target: { segmentId: "block:0", start: 0, end: 5 },
   });
   assert.equal(duplicate[0], 200);
@@ -500,6 +562,7 @@ test("annotation endpoint reports private mapper drift explicitly", async () => 
     attachmentKey: attachment.key,
     sourceHash: "hash",
     type: "underline",
+    expectedText: "Hello",
     target: { segmentId: "block:0", start: 0, end: 5 },
   });
   assert.equal(result[0], 501);

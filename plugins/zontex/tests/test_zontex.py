@@ -35,6 +35,34 @@ def batch_args(**overrides):
     return argparse.Namespace(**values)
 
 
+def annotation_manifest():
+    return {
+        "schemaVersion": 1,
+        "attachmentKey": "PDF12345",
+        "sourceHash": "HASH",
+        "annotations": [
+            {
+                "clientId": "A1",
+                "target": {"segmentId": "block:1", "start": 0, "end": 5},
+                "expectedText": "Hello",
+                "type": "highlight",
+                "color": "#ffd400",
+                "comment": "Method",
+                "tags": ["Method"],
+            },
+            {
+                "clientId": "A2",
+                "target": {"segmentId": "block:1", "start": 6, "end": 11},
+                "expectedText": "World",
+                "type": "underline",
+                "color": "#5fb236",
+                "comment": "",
+                "tags": [],
+            },
+        ],
+    }
+
+
 class ZontexTests(unittest.TestCase):
     def test_dump_json_falls_back_to_ascii_escapes_for_gbk_stdout(self):
         raw = io.BytesIO()
@@ -182,8 +210,9 @@ class ZontexTests(unittest.TestCase):
         self.assertEqual(args.mode, "citation")
         args = parser.parse_args(["navigate", "--open-attachment", "PDF12345"])
         self.assertEqual(args.open_attachment, "PDF12345")
-        args = parser.parse_args(["document-segments", "--limit", "25"])
+        args = parser.parse_args(["document-segments", "--limit", "25", "--verbose"])
         self.assertEqual(args.limit, 25)
+        self.assertTrue(args.verbose)
         args = parser.parse_args([
             "create-annotation",
             "--attachment-key",
@@ -196,10 +225,21 @@ class ZontexTests(unittest.TestCase):
             "0",
             "--end",
             "4",
+            "--expected-text",
+            "Text",
             "--tag",
             "Method",
         ])
         self.assertEqual(args.tag, ["Method"])
+        self.assertEqual(args.expected_text, "Text")
+        args = parser.parse_args([
+            "create-annotations",
+            "--file",
+            "plan.json",
+            "--expect-count",
+            "2",
+        ])
+        self.assertEqual(args.expect_count, 2)
         args = parser.parse_args([
             "annotations-to-note",
             "--parent-item-key",
@@ -460,6 +500,7 @@ class ZontexTests(unittest.TestCase):
             segment_id="block:1",
             start=0,
             end=4,
+            expected_text="Text",
             type="highlight",
             color="#ffd400",
             comment=None,
@@ -472,6 +513,174 @@ class ZontexTests(unittest.TestCase):
         preview = json.loads(output.getvalue())
         self.assertFalse(preview["committed"])
         self.assertEqual(preview["request"]["target"]["segmentId"], "block:1")
+        self.assertEqual(preview["request"]["expectedText"], "Text")
+
+    def test_annotation_manifest_uses_utf16_offsets_and_rejects_duplicate_targets(self):
+        value = annotation_manifest()
+        value["annotations"] = [{
+            **value["annotations"][0],
+            "target": {"segmentId": "block:1", "start": 0, "end": 3},
+            "expectedText": "A😀",
+        }]
+        normalized = zontex.validate_annotation_manifest(value, 1)
+        self.assertEqual(normalized["annotations"][0]["expectedText"], "A😀")
+
+        value["annotations"][0]["target"]["end"] = 2
+        with self.assertRaisesRegex(SystemExit, "UTF-16"):
+            zontex.validate_annotation_manifest(value, 1)
+
+        duplicate = annotation_manifest()
+        duplicate["annotations"][1]["target"] = dict(duplicate["annotations"][0]["target"])
+        duplicate["annotations"][1]["expectedText"] = "Hello"
+        with self.assertRaisesRegex(SystemExit, "Duplicate annotation target"):
+            zontex.validate_annotation_manifest(duplicate, 2)
+
+    def test_create_annotations_reuses_setup_and_verifies_once(self):
+        manifest = annotation_manifest()
+        responses = [
+            zontex.Response(
+                status=200,
+                headers={},
+                text=json.dumps({
+                    "created": True,
+                    "annotation": {"key": "ANN00001", "pageLabel": "1"},
+                }),
+            ),
+            zontex.Response(
+                status=200,
+                headers={},
+                text=json.dumps({
+                    "created": False,
+                    "duplicate": True,
+                    "annotation": {"key": "ANN00002", "pageLabel": "2"},
+                }),
+            ),
+        ]
+        children = [
+            {
+                "key": "ANN00001",
+                "itemType": "annotation",
+                "parentItem": "PDF12345",
+                "annotationType": "highlight",
+                "annotationText": "Hello",
+                "annotationComment": "Method",
+                "annotationColor": "#ffd400",
+                "tags": [{"tag": "Method"}],
+            },
+            {
+                "key": "ANN00002",
+                "itemType": "annotation",
+                "parentItem": "PDF12345",
+                "annotationType": "underline",
+                "annotationText": "World",
+                "annotationComment": "",
+                "annotationColor": "#5fb236",
+                "tags": [],
+            },
+        ]
+        args = argparse.Namespace(
+            file="plan.json",
+            expect_count=2,
+            timings=False,
+            yes=True,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(zontex, "read_annotation_manifest", return_value=manifest),
+            mock.patch.object(zontex, "require_companion") as require_companion,
+            mock.patch.object(
+                zontex,
+                "server_info",
+                return_value={"serverID": "SERVER", "writeSupported": True},
+            ) as server_info,
+            mock.patch.object(zontex, "authorized_request", side_effect=responses) as request,
+            mock.patch.object(zontex, "items_by_keys", return_value=children) as items_by_keys,
+            contextlib.redirect_stdout(output),
+        ):
+            zontex.cmd_create_annotations(args)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["counts"]["created"], 1)
+        self.assertEqual(result["counts"]["duplicate"], 1)
+        self.assertTrue(result["verification"]["ok"])
+        self.assertEqual(result["callCounts"]["annotationPosts"], 2)
+        require_companion.assert_called_once_with()
+        server_info.assert_called_once_with()
+        self.assertEqual(request.call_count, 2)
+        items_by_keys.assert_called_once_with(["ANN00001", "ANN00002"])
+
+    def test_create_annotations_stops_after_first_failure(self):
+        manifest = annotation_manifest()
+        manifest["annotations"].append({
+            "clientId": "A3",
+            "target": {"segmentId": "block:1", "start": 12, "end": 17},
+            "expectedText": "Third",
+            "type": "highlight",
+            "color": "#ffd400",
+            "comment": "",
+            "tags": [],
+        })
+        responses = [
+            zontex.Response(
+                status=200,
+                headers={},
+                text=json.dumps({
+                    "created": True,
+                    "annotation": {"key": "ANN00001", "pageLabel": "1"},
+                }),
+            ),
+            zontex.Response(
+                status=412,
+                headers={},
+                text=json.dumps({
+                    "error": "target-text-mismatch",
+                    "message": "The exact target text changed",
+                }),
+            ),
+        ]
+        children = [{
+            "key": "ANN00001",
+            "itemType": "annotation",
+            "parentItem": "PDF12345",
+            "annotationType": "highlight",
+            "annotationText": "Hello",
+            "annotationComment": "Method",
+            "annotationColor": "#ffd400",
+            "tags": [{"tag": "Method"}],
+        }]
+        args = argparse.Namespace(file="plan.json", expect_count=3, timings=False, yes=True)
+        output = io.StringIO()
+        with (
+            mock.patch.object(zontex, "read_annotation_manifest", return_value=manifest),
+            mock.patch.object(zontex, "require_companion"),
+            mock.patch.object(
+                zontex,
+                "server_info",
+                return_value={"serverID": "SERVER", "writeSupported": True},
+            ),
+            mock.patch.object(zontex, "authorized_request", side_effect=responses) as request,
+            mock.patch.object(zontex, "items_by_keys", return_value=children),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            zontex.cmd_create_annotations(args)
+        result = json.loads(output.getvalue())
+        self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(result["counts"]["failed"], 1)
+        self.assertEqual(result["notAttempted"], ["A3"])
+
+    @mock.patch.object(zontex, "api_get")
+    def test_items_by_keys_uses_one_filtered_readback(self, api_get):
+        api_get.return_value = [
+            {"data": {"key": "ANN00001", "itemType": "annotation"}},
+            {"data": {"key": "ANN00002", "itemType": "annotation"}},
+        ]
+        rows = zontex.items_by_keys(["ANN00001", "ANN00002"])
+        self.assertEqual([row["key"] for row in rows], ["ANN00001", "ANN00002"])
+        api_get.assert_called_once()
+        path = api_get.call_args.args[0]
+        self.assertIn("itemKey=ANN00001%2CANN00002", path)
+        self.assertIn("limit=2", path)
 
     @mock.patch.object(zontex, "bridge_post")
     def test_annotations_to_note_uses_native_route(self, bridge_post):

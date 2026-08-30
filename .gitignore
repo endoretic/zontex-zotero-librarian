@@ -4,5 +4,6 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*roadmap.md
 .coverage
 coverage.xml
