@@ -28,7 +28,7 @@ Bridge 是窄权限层，不提供任意代码执行端点，也不接管普通 
 
 Zontex 可以整理文献列表并复用全库条目，也能维护 metadata 与阅读状态、合并标签和重复条目。它还支持渲染引文与 Reader 导航、CSL 管理，以及在当前 PDF 中创建实验性的原生 highlight 或 underline。
 
-[查看完整功能、案例 prompt。“用一条指令串起工作流”](docs/workflows.md)
+[查看完整功能、案例 prompt 与“用一条指令串起工作流”](docs/workflows.md) · [查看高效批量条目工作流](docs/batch-item-workflows.md)
 
 ### Ethereal Style 标签与 metadata 约定
 
@@ -142,7 +142,7 @@ The Bridge is a narrowly scoped capability layer. It exposes no arbitrary-code e
 
 Zontex can curate literature lists while reusing records already present anywhere in the library. It can also maintain metadata and reading status, merge tags and duplicate items, render citations, navigate the Reader, manage CSL styles, and create experimental native highlights or underlines in the active PDF.
 
-[See all features, example prompts, and the “one prompt, end-to-end workflow” examples](docs/workflows.md#english).
+[See all features, example prompts, and the “one prompt, end-to-end workflow” examples](docs/workflows.md#english) · [See the efficient batch item workflow](docs/batch-item-workflows.md#english).
 
 ### Ethereal Style tag and metadata conventions
 
