@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "name": "ethereal-default-v2",
+  "identifierPolicy": {
+    "mode": "identifier-first",
+    "accepted": ["DOI", "PMID", "ISBN"],
+    "crossValidate": false,
+    "missing": "Let the agent complete bibliographic fields from the supplied source; never invent an identifier."
+  },
+  "palette": [
+    {"position": 0, "name": "/To Read", "color": "#6196BC", "kind": "status"},
+    {"position": 1, "name": "/Reading", "color": "#F2A65A", "kind": "status"},
+    {"position": 2, "name": "/Done", "color": "#59A14F", "kind": "status"},
+    {"position": 3, "name": "Role/Core", "color": "#E15759", "kind": "primary-role"},
+    {"position": 4, "name": "Role/Method", "color": "#B07AA1", "kind": "primary-role"},
+    {"position": 5, "name": "Role/Gap", "color": "#EDC948", "kind": "secondary-role"},
+    {"position": 6, "name": "Role/Context", "color": "#9C755F", "kind": "primary-role"},
+    {"position": 7, "name": "Signal/Resource", "color": "#76B7B2", "kind": "signal"},
+    {"position": 8, "name": "Signal/Validation", "color": "#FF9DA7", "kind": "signal"}
+  ],
+  "statuses": {
+    "values": ["/To Read", "/Reading", "/Done"],
+    "defaultForNew": "/To Read",
+    "maxPerItem": 1,
+    "assignment": "manual"
+  },
+  "roles": {
+    "primary": ["Role/Core", "Role/Method", "Role/Context"],
+    "secondary": ["Role/Gap", "Signal/Resource", "Signal/Validation"],
+    "minPerItem": 1,
+    "maxPerItem": 3,
+    "scope": "library-wide long-term use, never collection-specific"
+  },
+  "topics": {
+    "prefix": "#Topic/",
+    "minPerItem": 1,
+    "maxPerItem": 3
+  },
+  "rating": {
+    "field": "extra",
+    "line": "rate: N",
+    "min": 1,
+    "max": 5
+  }
+}
