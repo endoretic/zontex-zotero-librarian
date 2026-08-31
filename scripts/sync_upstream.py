@@ -16,6 +16,11 @@ def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def copy_vendored_file(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sync the vendored files from OpenAI's Zotero plugin")
     parser.add_argument("upstream", type=Path, help="Path to the upstream plugins/zotero directory")
@@ -40,8 +45,7 @@ def main() -> int:
     for source, target in copies.items():
         if not source.is_file():
             raise SystemExit(f"Missing upstream file: {source}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+        copy_vendored_file(source, target)
 
     version_changed = new_version != old_version
     source_changed = args.commit != old_commit
