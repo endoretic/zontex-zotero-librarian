@@ -3,7 +3,10 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
+import stat
 import sys
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -26,12 +29,34 @@ def load_module(name: str, relative_path: str):
 RELEASE_POLICY = load_module("release_policy", "scripts/release_policy.py")
 BUMP_VERSION = load_module("bump_version", "scripts/bump_version.py")
 BUILD_RELEASE = load_module("build_release", "scripts/build_release.py")
+SYNC_UPSTREAM = load_module("sync_upstream", "scripts/sync_upstream.py")
 RELEASE_UPDATER = load_module(
     "release_updater", "plugins/zontex/scripts/update_release.py"
 )
 
 
 class ReleaseAutomationTests(unittest.TestCase):
+    def test_upstream_state_uses_a_real_tree_sha(self) -> None:
+        state = json.loads((ROOT / "upstream.json").read_text(encoding="utf-8"))
+        self.assertRegex(state["pinnedCommit"], r"^[0-9a-f]{40}$")
+
+    def test_upstream_copy_does_not_inherit_executable_mode(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            source = root / "source.py"
+            target = root / "target.py"
+            source.write_text("new\n", encoding="utf-8")
+            target.write_text("old\n", encoding="utf-8")
+            if os.name != "nt":
+                source.chmod(0o755)
+                target.chmod(0o644)
+
+            SYNC_UPSTREAM.copy_vendored_file(source, target)
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "new\n")
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644)
+
     def test_zontex_identity_is_consistent_across_manifests(self) -> None:
         marketplace = json.loads(
             (ROOT / ".agents/plugins/marketplace.json").read_text(encoding="utf-8")
