@@ -631,7 +631,13 @@ def read_json_file(path: str) -> Any:
 
 def load_metadata_profile() -> dict[str, Any]:
     value = read_json_file(str(METADATA_PROFILE_PATH))
-    if not isinstance(value, dict) or value.get("schemaVersion") != 1:
+    schema_version = value.get("schemaVersion") if isinstance(value, dict) else None
+    if (
+        not isinstance(value, dict)
+        or isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != 1
+    ):
         exit_with("The bundled metadata profile has an unsupported schema")
     palette = value.get("palette")
     if not isinstance(palette, list) or len(palette) != MAX_COLORED_TAGS:
@@ -646,7 +652,10 @@ def load_metadata_profile() -> dict[str, Any]:
         or len(set(names)) != MAX_COLORED_TAGS
     ):
         exit_with("Metadata profile palette names must be non-empty and unique")
-    if positions != list(range(MAX_COLORED_TAGS)):
+    if (
+        any(isinstance(position, bool) or not isinstance(position, int) for position in positions)
+        or positions != list(range(MAX_COLORED_TAGS))
+    ):
         exit_with("Metadata profile palette positions must be exactly 0–8")
     if any(not isinstance(color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color) for color in colors):
         exit_with("Metadata profile colors must use #RRGGBB syntax")
@@ -806,7 +815,7 @@ def read_metadata_manifest(
     if not isinstance(value, dict) or value.get("profile") != profile["name"]:
         exit_with(f"Metadata manifest must select profile {profile['name']!r}")
     rows = value.get("items")
-    if not isinstance(rows, list) or len(rows) != expect_count:
+    if expect_count < 1 or not isinstance(rows, list) or len(rows) != expect_count:
         exit_with(f"Expected {expect_count} metadata manifest items")
     proposals = [validate_metadata_proposal(row, profile, index) for index, row in enumerate(rows)]
     keys = [row["key"] for row in proposals]
@@ -816,14 +825,7 @@ def read_metadata_manifest(
 
 
 def metadata_items_by_keys(keys: list[str]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for batch in chunks(keys, MAX_BATCH):
-        rows.extend(items_by_keys(batch))
-    by_key = {str(row.get("key")): row for row in rows}
-    missing = [key for key in keys if key not in by_key]
-    if missing:
-        exit_with(f"Metadata items were not found: {', '.join(missing)}")
-    return [by_key[key] for key in keys]
+    return items_by_keys(keys)
 
 
 def make_metadata_patch(

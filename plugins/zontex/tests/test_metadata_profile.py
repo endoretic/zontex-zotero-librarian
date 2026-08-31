@@ -38,6 +38,11 @@ class MetadataProfileTests(unittest.TestCase):
         self.assertEqual(profile["identifierPolicy"]["mode"], "identifier-first")
         self.assertFalse(profile["identifierPolicy"]["crossValidate"])
 
+    @mock.patch.object(zontex, "read_json_file", return_value={"schemaVersion": True})
+    def test_profile_rejects_boolean_schema_version(self, _read_json_file):
+        with self.assertRaisesRegex(SystemExit, "unsupported schema"):
+            zontex.load_metadata_profile()
+
     def test_audit_distinguishes_status_choices_from_multiple_assignments(self):
         profile = zontex.load_metadata_profile()
         problems = zontex.metadata_violations(
