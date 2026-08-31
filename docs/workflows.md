@@ -10,7 +10,7 @@ Zontex 让 Codex 负责理解任务、检索与规划，让 Zotero Local API 处
 
 #### 文献整理与全库去重
 
-通过 DOI、PMID 和标题，结合首位作者与年份归一化候选文献，先查完整 Zotero 文献库，再只导入缺失条目并复用已有记录。
+候选文献有 DOI、PMID、ISBN 等唯一标识时，优先使用其中已有的一种精确查找，不额外跨数据库核验；没有标识时由 agent 根据给定来源补齐普通引文字段，再以规范化标题、首位作者和年份辅助全库去重。Zontex 只导入真正缺失的条目并复用已有记录。
 
 ```text
 @Zontex 把这份引文列表整理进 “SDT Review”：全库去重，保留已有条目，只导入真正缺失的文献，并汇总需要我决定的 metadata 冲突。
@@ -25,58 +25,35 @@ Zontex 让 Codex 负责理解任务、检索与规划，让 Zotero Local API 处
 原生 Zotero 示例：
 
 ```text
-@Zontex 按 Zontex 的无插件默认方案整理 “SDT Review”。先读取并复用现有标签、颜色和同义词：
-用 StructuralDamage、VibrationAnalysis、SensorFusion、FieldValidation 等普通标签描述主题与方法；用彩色 /To Read、/Reading、/Done
-表示阅读状态，每篇最多一个；把当前课题相关度 1–5 写入 Extra 的 rate: N。本次不创建 #Role 标签。
-写入前列出将复用、新建和分配颜色的标签及预计影响数量；我确认后批量写入，再回读检查状态和评级。
+@Zontex 按 ethereal-default-v2 整理 “SDT Review”。先读取文献库现有九色配置；若调色板需要迁移，
+把它作为单独的全库操作列出并等我确认。每篇保留一个 /阅读状态，选择一个主要 Role，按证据添加至多两个
+Gap/Signal，使用 1–3 个 #Topic/ 受控主题，并把相关度写成 Extra 中唯一一行 rate: 1–5。
+新条目状态用 /To Read，已有手动状态不要覆盖。汇总数量后一次确认、批量写入并回读验证。
 ```
 
 Ethereal Style 示例：
 
 ```text
-@Zontex 按 Zontex 的 Ethereal Style 兼容方案整理 “SDT Review”。先读取并复用现有标签和颜色：
-主题用不带前缀的普通标签；阅读状态只用彩色 /To Read、/Reading、/Done，每篇最多一个；
-相关度写入 Extra 的 rate: 1–5；只有真正承担核心证据、方法来源或研究缺口作用的文献，才分别添加
-#Role/Core、#Role/Method 或 #Role/Gap，并且不给这些 #Role 标签分配颜色。写入前汇总预计数量；我确认后再执行并回读验证。
+@Zontex 按 Zontex 的 Ethereal Style 兼容默认方案整理 “SDT Review”。让 /To Read、/Reading、/Done
+提供三种可手动切换的状态，但每篇只保存当前一个；从 Role/Core、Role/Method、Role/Context 中选一个主要角色，
+有依据时再添加 Role/Gap、Signal/Resource 或 Signal/Validation，Role/Signal 合计 1–3 个；
+主题写为 1–3 个 #Topic/<规范名称>，相关度写为 rate: 1–5。不要为 Topic 分配原生颜色。
+写入前只给一份汇总；我确认后批量执行并回读检查。
 ```
 
-你可以直接替换默认名称、颜色和角色词表，而不改变这套结构：
+这两条 prompt 写入的是同一份 Zotero 数据；区别只在于你主要使用原生界面还是 Ethereal Style 的显示列。可以直接替换默认名称、颜色和词表，而不改变结构：
 
 ```text
 @Zontex 以上述默认方案为模板，但使用以下自定义：
-状态：<状态名称、颜色和顺序>；彩色主题：<允许分配颜色的少量主题>；
-# 标签：<允许的命名空间和词表>；rate：<1–5 各自代表什么>。
-先读取现有标签与颜色，列出可复用项、命名冲突和迁移数量，不要立即写入；等我确认后再迁移并验证。
+状态：<状态名称、颜色和顺序>；主要 Role 与可选 Signal：<词表、颜色和含义>；
+Topic：<命名空间与受控词表>；rate：<1–5 各自代表什么>。
+保持原生彩色标签总数不超过 9。先读取现有标签与颜色，列出冲突和迁移数量，不要立即写入；
+等我确认后再迁移调色板，条目 metadata 另行批量写入并验证。
 ```
 
-> 注意：Zotero 本身没有规定标签词表，所以上述“原生方案”是本工作流提供的一套无插件默认方案。条目中实际写入的都是 Zotero 标签；“普通标签”“彩色标签”和“`#` 标签”，并不是互不兼容的数据。
+> Zotero 本身没有规定标签词表。Zontex 提供的是一套可修改的默认方案；原生颜色属于整个文献库，条目标签则属于单条文献。两者不会因为一次 metadata 写入自动互相改动。
 
-| 名称 | 实际写入 Zotero 的内容 | 原生 Zotero 中的表现 | Ethereal Style 中的表现 |
-| --- | --- | --- | --- |
-| 普通标签 | `StructuralDamage`、`VibrationAnalysis`、`SensorFusion` 等标签 | 显示在标签面板中，可用于筛选 | 仍是普通标签；默认不会出现在只匹配 `#` 的 `#Tags` 列中 |
-| 彩色标签 | 普通标签外加文献库级的原生颜色与位置，例如 `/To Read` + 蓝色 | 标题旁显示彩色色块，并可用数字键切换 | `Tags` 列可将它显示为彩色小圆点或标记 |
-| 彩色小圆点 | 不产生新数据 | 没有独立对应项 | 只是彩色标签的界面效果；不能直接“写入一个圆点” |
-| `#` 标签 | 名称以 `#` 开头的普通标签，例如 `#Role/Method` | 按原名显示，`#` 没有特殊含义 | `#Tags` 列默认以文字显示并隐藏开头的 `#`，也可按 `/` 展示层级 |
-| 评级 | `Extra` 中的一行 `rate: 1` 至 `rate: 5` | 作为普通 `Extra` metadata 保存 | 可由 Rating 界面读取和修改 |
-
-颜色与前缀彼此独立：`#Role/Method` 不会因为有 `#` 自动带颜色，`/To Read` 也只有在分配 Zotero 原生颜色后才会显示为彩色标记。一个 `#` 标签也可以另行分配颜色，但默认不这样做，以免它同时在 `Tags` 和 `#Tags` 两列重复出现。Zotero 每个文献库[最多可配置 9 个彩色标签](https://www.zotero.org/support/collections_and_tags#colored_tags)，因此颜色应留给少量需要一眼识别或用快捷键切换的标签。
-
-Zontex 的默认方案如下：
-
-- 主题、方法和数据特征使用不带前缀的普通标签，例如 `StructuralDamage`、`VibrationAnalysis`、`SensorFusion` 和 `FieldValidation`。它们可以按研究需要保持细致；默认不分配颜色。
-- 阅读状态使用 `/To Read`、`/Reading`、`/Done`；每篇文献最多一个，并在用户同意后分配原生颜色。
-- 当前课题相关度写入 `Extra` 的 `rate: N`，含义是“对这个课题有多重要”，不是论文质量或期刊等级。
-- 文献在研究中的特殊作用可选用 `#Role/Core`、`#Role/Method`、`#Role/Gap`；默认不分配颜色，也不要求每篇都有。
-- 少量长期复用的主题可以由用户提升为彩色标签；Zontex 先读取已有颜色和位置，不覆盖用户现有配置。
-
-一篇文献的完整 metadata 可以是：
-
-```text
-Tags: StructuralDamage, SensorFusion, /Done, #Role/Core
-Extra: rate: 5
-```
-
-在原生 Zotero 中，这四项都是可搜索的标签，`/Done` 若已分配颜色，会在标题旁显示色块；在 Ethereal Style 中，同一份数据可表现为 `Tags` 列中的状态圆点、`#Tags` 列中的 `Role/Core` 文字和 Rating 中的 5 分。`StructuralDamage` 与 `SensorFusion` 仍保留为普通主题标签。若希望普通主题标签也显示在 Ethereal Style 的文字标签列中，可以按其 [`#Tags` 列规则](https://github.com/MuiseDestiny/zotero-style#tags-1)把 `Prefix` 改为 `~~/`，显示所有不以 `/` 开头的标签；不必为此把全部主题标签改成 `#` 标签。
+[查看九色表、完整示例、引文标识规则与自定义方法](tag-metadata-conventions.md)
 
 #### 全库标签维护
 
@@ -128,10 +105,11 @@ Zontex 能识别你当前选中的条目或正在阅读的 PDF，按指定样式
 
 ```text
 @Zontex 先运行 status --require-write。读取我提供的引文列表，为 “SDT Review” 建立或复用 collection；
-按 DOI、PMID、标题、首位作者和年份与完整 Zotero 文献库去重，复用已有记录，只导入真正缺失的文献。
-然后给出一份合并后的决策清单：来源、重复项、metadata 冲突、缺失字段、拟导入条目，以及 rate、/状态、
-受控主题标签和必要的 #Role 标签方案。把所有预计写入数量汇总成一次确认；我确认后再执行，不要逐条询问。
-完成后回读 collection，检查条目数、每条至多一个 /状态、角色标签范围、rate 和 collection 成员关系，
+候选有 DOI、PMID、ISBN 等唯一标识就优先用已有的一种精确查找，不做跨数据库交叉验证；没有标识时，
+根据我提供的来源补齐普通引文字段但不要编造标识，再以标题、首位作者和年份辅助全库去重。
+复用已有记录，只导入真正缺失的文献。然后给出一份合并后的决策清单：来源、重复项、缺失字段、
+拟导入条目，以及 rate、/状态、Role/Signal 和 #Topic 方案。把所有预计写入数量汇总成一次确认；
+我确认后再执行，不要逐条询问。完成后回读 collection，检查条目数、每条一个状态、Role/Signal 范围、Topic、rate 和成员关系，
 最后只报告实际改动与仍未解决的记录。
 ```
 
@@ -157,7 +135,7 @@ Zontex lets Codex interpret requests, retrieve literature, and plan operations. 
 
 #### Literature curation and library-wide deduplication
 
-Zontex normalizes candidate literature by DOI, PMID, and title, with first author and year as supporting evidence. It searches the complete Zotero library before importing anything, reuses existing records, and imports only genuinely missing items.
+When a candidate has a DOI, PMID, ISBN, or another unique identifier, Zontex uses whichever identifier is available for exact lookup without cross-validating it against another database. Without an identifier, the agent completes ordinary citation fields from the supplied source and uses normalized title, first author, and year as fallback evidence. It searches the complete Zotero library, reuses existing records, and imports only genuinely missing items.
 
 ```text
 @Zontex Curate this citation list into “SDT Review”. Deduplicate it against my entire Zotero library, retain existing
@@ -173,63 +151,37 @@ records, import only genuinely missing literature, and summarize the metadata co
 Stock Zotero example:
 
 ```text
-@Zontex Curate “SDT Review” using Zontex's default no-plugin profile. First inspect and reuse existing tags, colors,
-and synonyms. Use StructuralDamage, VibrationAnalysis, SensorFusion, and FieldValidation as ordinary tags for topics
-and methods. Use the colored /To Read, /Reading, and /Done tags for reading status, with at most one per item. Write
-relevance to the current project as rate: N, from 1 to 5, in Extra. Do not create #Role tags in this run. Before
-writing, list the tags to reuse, create, or assign colors to, together with the expected affected-item count. Wait for
-my confirmation, apply the changes as one batch, and then read the items back to verify status and rating.
+@Zontex Curate “SDT Review” with ethereal-default-v2. Inspect the library's existing nine-color palette first; if it
+needs migration, present that as a separate library-wide operation and wait for my confirmation. Keep one reading
+status per paper, choose one primary Role, add at most two evidence-supported Gap/Signal tags, assign one to three
+controlled #Topic/ tags, and store relevance as the only rate: 1–5 line in Extra. Use /To Read for new items, but do
+not overwrite an existing manual status. Confirm once, write as a batch, and verify by reading the items back.
 ```
 
 Ethereal Style example:
 
 ```text
-@Zontex Curate “SDT Review” using Zontex's Ethereal Style-compatible profile. First inspect and reuse existing tags
-and colors. Keep topical tags unprefixed. Use only the colored /To Read, /Reading, and /Done tags for reading status,
-with at most one per item. Write relevance as rate: 1–5 in Extra. Add #Role/Core, #Role/Method, or #Role/Gap only
-when a paper genuinely serves as core evidence, a method source, or evidence of a research gap, and do not assign
-colors to these #Role tags. Before writing, provide one consolidated expected-count summary. Wait for my confirmation,
-then apply the batch and read it back for verification.
+@Zontex Curate “SDT Review” with Zontex's default Ethereal Style-compatible profile. Offer /To Read, /Reading, and
+/Done as three manually switchable choices, while storing only the current one on each paper. Choose one of Role/Core,
+Role/Method, or Role/Context as the primary role; add Role/Gap, Signal/Resource, or Signal/Validation only when the
+paper supports it, for one to three Role/Signal tags in total. Assign one to three #Topic/<CanonicalName> tags and
+rate: 1–5, without giving Topic tags native colors. Provide one summary before writing; after I confirm, apply the
+batch and verify it by readback.
 ```
 
-You can replace the default names, colors, and role vocabulary without changing the structure:
+Both prompts write the same Zotero data; only the interface used to view it differs. You can replace the default names, colors, and vocabulary without changing the structure:
 
 ```text
 @Zontex Use the default profile above as a template, with these customizations:
-Statuses: <status names, colors, and order>; colored topics: <the small set of topics allowed to receive colors>;
-# tags: <allowed namespaces and vocabulary>; rate: <what each value from 1 to 5 means>.
-First inspect the existing tags and colors. List reusable entries, naming conflicts, and migration counts without
-writing anything. Wait for my confirmation before migrating and verifying the metadata.
+Statuses: <names, colors, and order>; primary Roles and optional Signals: <vocabulary, colors, and meanings>;
+Topics: <namespace and controlled vocabulary>; rate: <what values 1 through 5 mean>. Keep the native colored-tag
+total at nine or fewer. Inspect the existing tags and colors first, then list conflicts and migration counts without
+writing. Wait for my confirmation before migrating the palette; write and verify item metadata as a separate batch.
 ```
 
-> Note: Zotero does not define a tag vocabulary. The “stock profile” above is a no-plugin default supplied by this workflow. Ordinary tags, colored tags, and `#`-prefixed tags are not mutually incompatible data types; they are different uses or presentations of Zotero tags.
+> Zotero itself does not define a tag vocabulary. Zontex supplies a configurable default. Native colors belong to the library, while tag assignments belong to individual items; an item metadata write does not silently reconfigure the palette.
 
-| Name | What is actually written to Zotero | Appearance in stock Zotero | Appearance in Ethereal Style |
-| --- | --- | --- | --- |
-| Ordinary tag | Tags such as `StructuralDamage`, `VibrationAnalysis`, and `SensorFusion` | Appears in the Tags pane and can be used for filtering | Remains an ordinary tag; by default it does not appear in a `#Tags` column configured to match only `#` |
-| Colored tag | An ordinary tag plus a library-level native color and position, such as `/To Read` + blue | Appears as a colored mark beside the title and can be toggled with a number key | The `Tags` column can render it as a compact colored marker |
-| Colored marker | No additional data | Has no independent stored counterpart | A visual rendering of a colored tag, not something that can be written separately |
-| `#` tag | An ordinary tag whose name starts with `#`, such as `#Role/Method` | Appears under its literal name; `#` has no special meaning | The `#Tags` column displays it as text without the leading `#` by default and can use `/` as a hierarchy separator |
-| Rating | One line from `rate: 1` through `rate: 5` in `Extra` | Stored as ordinary `Extra` metadata | Can be read and edited through the Rating interface |
-
-Color and prefix are independent. `#Role/Method` does not receive a color merely because it starts with `#`, and `/To Read` appears as a colored marker only after a native Zotero color has been assigned. A `#` tag can also receive a color, but the default profile avoids that because the same tag could then appear both as a marker in `Tags` and as text in `#Tags`. Zotero allows [up to nine colored tags per library](https://www.zotero.org/support/collections_and_tags#colored_tags), so colors should be reserved for tags that need to be recognized at a glance or toggled by keyboard.
-
-The default Zontex profile is:
-
-- Use unprefixed ordinary tags for topics, methods, and data characteristics, such as `StructuralDamage`, `VibrationAnalysis`, `SensorFusion`, and `FieldValidation`. These tags may remain as detailed as the research requires; they are uncolored by default.
-- Use `/To Read`, `/Reading`, and `/Done` for reading status. Assign native colors after the user agrees, and keep at most one status per item.
-- Store relevance to the current project as `rate: N` in `Extra`. It does not represent paper quality or venue ranking.
-- Optionally use `#Role/Core`, `#Role/Method`, and `#Role/Gap` for a paper's specific role in the research. These tags are uncolored by default, and not every paper needs one.
-- The user can promote a few stable, frequently reused topics to colored tags. Zontex reads the existing color assignments and positions first and does not overwrite the user's configuration.
-
-A complete metadata example for one paper is:
-
-```text
-Tags: StructuralDamage, SensorFusion, /Done, #Role/Core
-Extra: rate: 5
-```
-
-In stock Zotero, all four entries under `Tags` are searchable tags, and `/Done` appears as a colored mark beside the title if a color has been assigned. In Ethereal Style, the same data can appear as a `/Done` status marker in `Tags`, `Role/Core` text in `#Tags`, and a rating of 5 in Rating. `StructuralDamage` and `SensorFusion` remain ordinary topical tags. To show ordinary topical tags in Ethereal Style's text-tag column, follow its [`#Tags` column rules](https://github.com/MuiseDestiny/zotero-style#tags-1) and set `Prefix` to `~~/`, which displays every tag that does not start with `/`. There is no need to rename every topical tag with a `#` prefix.
+[See the complete nine-color palette, item example, identifier policy, and customization guidance](tag-metadata-conventions.md#english).
 
 #### Library-wide tag maintenance
 
@@ -286,13 +238,14 @@ The following prompt combines candidate literature, deduplication, metadata plan
 
 ```text
 @Zontex First run status --require-write. Read the citation list I provide and create or reuse the “SDT Review”
-collection. Deduplicate every candidate against the complete Zotero library by DOI, PMID, title, first author, and
-year. Reuse existing records and import only genuinely missing literature. Then provide one consolidated decision
-list covering provenance, duplicates, metadata conflicts, missing fields, proposed imports, and the proposed rate,
-/status, controlled topical tags, and necessary #Role tags. Combine all expected write counts into one confirmation.
-After I confirm, execute the batch without asking item by item. Read the collection back and verify its item count,
-at most one /status per item, the allowed role-tag vocabulary, rate values, and collection membership. Report only
-the changes actually made and any unresolved records.
+collection. If a candidate has a DOI, PMID, ISBN, or another unique identifier, use whichever identifier is present
+for exact lookup without cross-validating it against another database. If none is present, complete ordinary citation
+fields from my supplied source without inventing an identifier, then use title, first author, and year as fallback
+deduplication evidence. Reuse existing records and import only genuinely missing literature. Provide one decision list
+covering provenance, duplicates, missing fields, proposed imports, and the rate, /status, Role/Signal, and #Topic plan.
+Combine all expected writes into one confirmation. After I confirm, execute the batch without asking item by item.
+Read the collection back and verify item count, one status per item, Role/Signal and Topic rules, ratings, and membership.
+Report only the changes actually made and any unresolved records.
 ```
 
 A maintenance task can also be expressed in one prompt:

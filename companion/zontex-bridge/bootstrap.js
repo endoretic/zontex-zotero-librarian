@@ -11,6 +11,7 @@ const TESTED_ZOTERO_VERSION = "10.0.1";
 const PRIVATE_ANNOTATION_BACKEND = "private-reader-internals";
 const TAG_RENAME_ROUTE = "/api/users/:userID/zontex/tags/rename";
 const TAG_MERGE_ROUTE = "/api/users/:userID/zontex/tags/merge";
+const MAX_COLORED_TAGS = 9;
 const ROUTES = [
   STATUS_ROUTE,
   STYLES_ROUTE,
@@ -458,8 +459,13 @@ function statusEndpointClass() {
         if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
           return textResponse(400, "Color must use #RRGGBB syntax");
         }
-        if (position !== undefined && position < 0) {
-          return textResponse(400, "Position cannot be negative");
+        if (position === undefined || position < 0 || position >= MAX_COLORED_TAGS) {
+          return textResponse(400, `Position must be between 0 and ${MAX_COLORED_TAGS - 1}`);
+        }
+        const all = coloredTags(libraryID);
+        const current = all.find((entry) => entry.name === name);
+        if (!current && all.length >= MAX_COLORED_TAGS) {
+          return textResponse(409, `Zotero allows at most ${MAX_COLORED_TAGS} colored tags`);
         }
         await Zotero.Tags.setColor(libraryID, name, color, position);
         return jsonResponse(200, { name, color, position });
