@@ -34,11 +34,13 @@ Zontex 可以整理文献列表并复用全库条目，也能维护 metadata 与
 
 用户要求使用 Ethereal Style 约定时，默认按以下规则为条目添加 metadata：
 
-- `/To Read`、`/Reading`、`/Done`：少量彩色 slash status；每个条目至多一个。
+- `/To Read`、`/Reading`、`/Done`：文献库统一提供的三个阅读状态；每个条目只保存当前一个状态。
 - `rate: 1` 至 `rate: 5`：写入 `Extra`，表示对当前课题的重要性，不代表期刊或作者质量。
-- `Topic A`、`Method`、`Dataset`：不带 `#Topic/` 前缀的普通主题标签；只给少量稳定且高频的主题分配原生颜色。
-- `#Role/Core`、`#Role/Method`、`#Role/Gap`：仅在必要时使用的三种角色标签。
-- 彩色小圆点只表示 Zotero 原生彩色标签；`#` 或 `/` 前缀本身不会赋予颜色。
+- `Role/Core`、`Role/Method`、`Role/Context`：每篇选择一个长期有效的主要角色；可再添加 `Role/Gap`、`Signal/Resource` 或 `Signal/Validation`，角色与信号合计 1–3 个。
+- `#Topic/<CanonicalName>`：每篇 1–3 个受控主题标签，不占原生颜色位置。
+- 三个状态与六个 Role / Signal 固定使用 Zotero 的九个文献库级颜色位置。颜色配置与条目上的标签彼此独立，并由同一文献库中的所有 collection 共用。
+
+整理引文时，有 DOI、PMID、ISBN 等唯一标识就优先使用其中已有的一种进行精确查找，不额外跨数据库核验；没有标识时由 agent 根据用户提供的来源补齐普通引文字段，但不会编造唯一标识。完整规则与配色见[标签与 metadata 约定](docs/tag-metadata-conventions.md)。
 
 ### 安装
 
@@ -146,11 +148,13 @@ Zontex can curate literature lists while reusing records already present anywher
 
 When the user requests the Ethereal Style conventions, Zontex applies the following defaults:
 
-- `/To Read`, `/Reading`, and `/Done`: a small set of colored slash-prefixed status tags, with at most one status per item.
+- `/To Read`, `/Reading`, and `/Done`: three library-wide reading choices, with only the current status stored on each item.
 - `rate: 1` through `rate: 5`: stored in `Extra` to express relevance to the current project, not the quality of the venue or authors.
-- `Topic A`, `Method`, and `Dataset`: ordinary topical tags without a `#Topic/` prefix. Native colors are reserved for a small number of stable, frequently reused topics.
-- `#Role/Core`, `#Role/Method`, and `#Role/Gap`: three optional role tags, used only when they add useful information.
-- A colored marker represents a native Zotero colored tag. A leading `#` or `/` does not assign a color by itself.
+- `Role/Core`, `Role/Method`, or `Role/Context`: one durable primary role per paper, optionally joined by `Role/Gap`, `Signal/Resource`, or `Signal/Validation`, for a total of one to three role/signal tags.
+- `#Topic/<CanonicalName>`: one to three controlled topical tags per paper, without consuming native color positions.
+- The three statuses and six Role / Signal tags occupy Zotero's nine library-level color positions. The palette is separate from item assignments and is shared by every collection in the library.
+
+For citation curation, Zontex uses any available unique identifier—such as a DOI, PMID, or ISBN—for exact lookup without cross-validating it against other databases. When no identifier exists, the agent completes ordinary citation fields from the source supplied by the user and never invents an identifier. See [Tag and metadata conventions](docs/tag-metadata-conventions.md#english) for the full profile and palette.
 
 ### Installation
 
