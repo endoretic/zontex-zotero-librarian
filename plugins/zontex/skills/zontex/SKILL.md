@@ -26,12 +26,13 @@ The script stores the local write key in the current Windows user's local applic
 
 ## Data conventions
 
-- A style-compatible status is a native colored Zotero tag whose name starts with `/`. An item should have at most one such status; `set-status` removes its previous slash-prefixed status first.
-- A style-compatible rating is the line `rate: N` in the item's Extra field, where N is 1 through 5. Preserve all unrelated Extra lines.
-- Ordinary topical tags use a controlled, unprefixed vocabulary. Do not create a `#Topic/...` namespace. The round-dot Tags column displays native Zotero colored tags; assign colors only to a few stable, frequently reused topics and the three workflow statuses.
-- Use only `#Role/Core`, `#Role/Method`, and `#Role/Gap` in the visible `#` role namespace, and only where the role is genuinely useful. Do not create one-off role or topic tags.
-- Configure `/To Read`, `/Reading`, and `/Done` as the small colored status set. Unless the user supplies reading progress, new curated literature may default to `/To Read`.
-- Before creating topical tags, inspect existing tags with `python scripts/zotero.py tags`. Reuse the controlled vocabulary and never generate one unique AI tag per item.
+- `ethereal-default-v2` is the default for a broad request to use Zontex or Ethereal Style conventions. Inspect its machine-readable rules with `metadata-profile`; an explicit user vocabulary overrides soft defaults but not Zotero's nine-color limit.
+- Configure exactly nine library-level native colors: `/To Read`, `/Reading`, `/Done`, `Role/Core`, `Role/Method`, `Role/Gap`, `Role/Context`, `Signal/Resource`, and `Signal/Validation`, in the positions and colors declared by the profile. Palette setup or migration is separate from item metadata. Inspect `colored-tags`, summarize every conflict, and obtain explicit confirmation before replacing existing library-wide colors.
+- The status menu offers three manual choices, but each item stores at most one slash-prefixed status. Preserve an existing manual status unless the user asks to change it; new curated literature may default to `/To Read` when no reading progress is known.
+- Assign exactly one primary role from `Role/Core`, `Role/Method`, and `Role/Context`. Add `Role/Gap`, `Signal/Resource`, or `Signal/Validation` only when supported by the paper, keeping all Role / Signal tags to a total of one through three. Roles describe durable library-wide use, never collection-specific use.
+- Assign one through three controlled `#Topic/<CanonicalName>` tags. Topic tags remain uncolored and provide the extensible subject vocabulary. Before creating them, inspect existing tags with `python scripts/zotero.py tags`; reuse canonical terms and never generate one unique AI tag per item.
+- A style-compatible rating is the single line `rate: N` in the item's Extra field, where N is 1 through 5. It represents research relevance or priority, not paper, venue, author, or journal quality. Preserve all unrelated Extra lines.
+- For candidate identity, use whichever reliable unique identifier is already present, including DOI, PMID, or ISBN, for exact lookup. Do not require cross-validation against another database. If no identifier exists, complete ordinary citation fields from the user-supplied source and fall back to normalized title, first author, and year for local matching; never invent an identifier.
 - Do not add journal names, impact factors, journal tiers, or easyScholar metadata unless the user explicitly changes the project scope.
 
 The colored-tag/status, CSL, and active-annotation commands require the separately installed Zontex Bridge XPI. Basic collection/item CRUD uses Zotero 10's stock authorized local API.
@@ -78,14 +79,14 @@ Use this sequence when the user wants a collection built from a literature list.
 1. Pass `status --require-write` before doing anything else. If it fails, stop at the authorization problem.
 2. Create or resolve the target collection. Creating one empty collection is a small write and does not require a separate confirmation after the gate passes.
 3. Obtain candidates from the sources the user placed in scope: an existing workspace or connector list, local Zotero results, BibTeX/RIS, an accessible PDF reference list, or available scholarly-search tools. Record the source of every candidate; this plugin itself is not a search engine.
-4. Normalize DOI, PMID, title, first author, and year. Compare each candidate first against the complete Zotero library and then against the target collection. Classify exact duplicates, likely duplicates, metadata conflicts, missing fields, retained existing records, and genuinely missing imports.
+4. Use any reliable unique identifier already present—DOI, PMID, ISBN, or equivalent—for exact local lookup, without requiring another database to corroborate it. If none is present, complete ordinary citation fields from the supplied source without inventing an identifier, then compare normalized title, first author, and year. Compare each candidate first against the complete Zotero library and then against the target collection. Classify exact duplicates, likely duplicates, metadata conflicts, missing fields, retained existing records, and genuinely missing imports.
 5. Present one literature decision list and one consolidated write summary. This is not a command-by-command mutation preview. Include candidate provenance, duplicate resolution, unresolved metadata, proposed imports, retained records, the Ethereal-compatible metadata policy, and the expected number of affected items. Ask once for confirmation of the multi-item write.
 6. After confirmation, import only genuinely missing records, add retained records to the collection, and write the agreed metadata without more previews or confirmations:
    - `rate: N` in Extra, based on direct relevance, reusable methods/data, and value to the review argument—not journal metrics;
-   - at most one `/To Read`, `/Reading`, or `/Done` status;
-   - ordinary unprefixed controlled topical tags, with native colors assigned only to a few stable, high-frequency topics;
-   - only necessary `#Role/Core`, `#Role/Method`, or `#Role/Gap` role tags.
-7. Read back the target collection and verify counts, one-status-per-item, allowed role tags, ratings, and expected membership. Report a concise final change summary and unresolved records. Do not generate a pre-write preview file, audit log, JSON snapshot, or BibTeX export unless the user requested it.
+   - exactly one `/To Read`, `/Reading`, or `/Done` status, preserving an existing manual status unless the user requested a change;
+   - exactly one primary `Role/Core`, `Role/Method`, or `Role/Context`, plus evidence-supported `Role/Gap`, `Signal/Resource`, or `Signal/Validation`, for one to three Role / Signal tags total;
+   - one to three controlled, uncolored `#Topic/<CanonicalName>` tags.
+7. Prefer one heterogeneous `curate-metadata` manifest over repeated per-item status, tag, and rating commands. Read back the target collection and verify counts, one-status-per-item, Role / Signal and Topic rules, ratings, and expected membership. Report a concise final change summary and unresolved records. Do not generate an audit log, snapshot, or BibTeX export unless the user requested it.
 
 ## Common commands
 
@@ -93,10 +94,13 @@ Use this sequence when the user wants a collection built from a literature list.
 python scripts/zontex.py status --require-write
 python scripts/zontex.py authorize-write
 python scripts/zontex.py collections
+python scripts/zontex.py metadata-profile
+python scripts/zontex.py metadata-audit --collection-name "SDT Review" --expect-count 24
+python scripts/zontex.py curate-metadata --file .\metadata.json --expect-count 24 --yes
 python scripts/zontex.py backup-collection --collection-name "SDT Review" --file .\sdt-review-backup.json
 python scripts/zontex.py rename-collection --current-name "SDT Review" --name "SDT Methods Review" --yes
 python scripts/zontex.py batch-update-items --collection-name "SDT Review" --expect-count 24 --set language=en --yes
-python scripts/zontex.py create-status --name reading --color "#4C9AFF" --yes
+python scripts/zontex.py create-status --name reading --color "#F2A65A" --position 1 --yes
 python scripts/zontex.py set-status --collection-name "SDT Review" --expect-count 24 --name /reading --yes
 python scripts/zontex.py set-rating --item-key ABCD2345 --value 5 --yes
 python scripts/zontex.py trash-items --item-key PAPER123 --item-key ANN12345 --expect-count 2 --confirm DELETE-PERMANENTLY --yes

@@ -38,6 +38,7 @@ APP_NAME = "Zontex"
 TEXT_LIMIT = 500
 WRITE_TIMEOUT = 180.0
 MAX_BATCH = 50
+MAX_COLORED_TAGS = 9
 ZONTEX_STATUS_PATH = f"{LOCAL_USER}/zontex/statuses"
 ZONTEX_STYLES_PATH = f"{LOCAL_USER}/zontex/styles"
 ZONTEX_CONTEXT_PATH = f"{LOCAL_USER}/zontex/context"
@@ -51,7 +52,14 @@ ZONTEX_TAG_MERGE_PATH = f"{LOCAL_USER}/zontex/tags/merge"
 ZONTEX_ITEM_MERGE_PATH = f"{LOCAL_USER}/zontex/items/merge"
 STATUS_PREFIX = "/"
 RATE_LINE_RE = re.compile(r"^\s*rate\s*:\s*([1-5])\s*$", re.IGNORECASE)
+RATE_FIELD_RE = re.compile(r"^\s*rate\s*:", re.IGNORECASE)
 CSL_NAMESPACE = "http://purl.org/net/xbiblio/csl"
+METADATA_PROFILE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "config"
+    / "metadata-profiles"
+    / "ethereal-default-v2.json"
+)
 
 
 @dataclass(frozen=True)
@@ -621,6 +629,341 @@ def read_json_file(path: str) -> Any:
         exit_with(f"Invalid JSON file {path}: {exc}")
 
 
+def load_metadata_profile() -> dict[str, Any]:
+    value = read_json_file(str(METADATA_PROFILE_PATH))
+    if not isinstance(value, dict) or value.get("schemaVersion") != 1:
+        exit_with("The bundled metadata profile has an unsupported schema")
+    palette = value.get("palette")
+    if not isinstance(palette, list) or len(palette) != MAX_COLORED_TAGS:
+        exit_with(f"The metadata profile must define exactly {MAX_COLORED_TAGS} colors")
+    if any(not isinstance(row, dict) for row in palette):
+        exit_with("Metadata profile palette entries must be objects")
+    names = [row.get("name") for row in palette]
+    positions = [row.get("position") for row in palette]
+    colors = [row.get("color") for row in palette]
+    if (
+        any(not isinstance(name, str) or not name for name in names)
+        or len(set(names)) != MAX_COLORED_TAGS
+    ):
+        exit_with("Metadata profile palette names must be non-empty and unique")
+    if positions != list(range(MAX_COLORED_TAGS)):
+        exit_with("Metadata profile palette positions must be exactly 0–8")
+    if any(not isinstance(color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color) for color in colors):
+        exit_with("Metadata profile colors must use #RRGGBB syntax")
+
+    statuses = value.get("statuses", {}).get("values")
+    roles = value.get("roles", {})
+    primary = roles.get("primary")
+    secondary = roles.get("secondary")
+    topics = value.get("topics", {})
+    if not all(
+        isinstance(rows, list)
+        and rows
+        and all(isinstance(name, str) and name for name in rows)
+        for rows in (statuses, primary, secondary)
+    ):
+        exit_with("Metadata profile status and role vocabularies must be non-empty lists")
+    managed = [*statuses, *primary, *secondary]
+    if len(set(managed)) != len(managed) or any(name not in names for name in managed):
+        exit_with("Metadata profile managed tags must be unique palette entries")
+    if not isinstance(topics.get("prefix"), str) or not topics["prefix"]:
+        exit_with("Metadata profile topic prefix must be non-empty")
+    return value
+
+
+def metadata_tag_sets(profile: dict[str, Any]) -> tuple[set[str], set[str], set[str]]:
+    statuses = set(profile["statuses"]["values"])
+    primary = set(profile["roles"]["primary"])
+    secondary = set(profile["roles"]["secondary"])
+    return statuses, primary, secondary
+
+
+def metadata_violations(data: dict[str, Any], profile: dict[str, Any]) -> list[str]:
+    names = [str(tag.get("tag", "")) for tag in data.get("tags", [])]
+    statuses, primary, secondary = metadata_tag_sets(profile)
+    item_statuses = [name for name in names if name.startswith(STATUS_PREFIX)]
+    primary_roles = [name for name in names if name in primary]
+    role_signals = [name for name in names if name in primary or name in secondary]
+    prefix = profile["topics"]["prefix"]
+    topics = [name for name in names if name.startswith(prefix)]
+    rate_lines = [line for line in str(data.get("extra") or "").splitlines() if RATE_FIELD_RE.match(line)]
+
+    problems: list[str] = []
+    if len(item_statuses) > profile["statuses"]["maxPerItem"]:
+        problems.append("multiple-statuses")
+    if any(name not in statuses for name in item_statuses):
+        problems.append("unknown-status")
+    if len(primary_roles) != 1:
+        problems.append("primary-role-count")
+    if not profile["roles"]["minPerItem"] <= len(role_signals) <= profile["roles"]["maxPerItem"]:
+        problems.append("role-signal-count")
+    if not profile["topics"]["minPerItem"] <= len(topics) <= profile["topics"]["maxPerItem"]:
+        problems.append("topic-count")
+    if len(rate_lines) != 1:
+        problems.append("rating-count")
+    elif not RATE_LINE_RE.match(rate_lines[0]):
+        problems.append("invalid-rating")
+    return problems
+
+
+def cmd_metadata_profile(_: argparse.Namespace) -> None:
+    dump_json(load_metadata_profile())
+
+
+def cmd_metadata_audit(args: argparse.Namespace) -> None:
+    profile = load_metadata_profile()
+    items = select_items(args)
+    violations = [
+        {
+            "key": data.get("key"),
+            "title": data.get("title"),
+            "violations": problems,
+        }
+        for data in items
+        if (problems := metadata_violations(data, profile))
+    ]
+    dump_json(
+        {
+            "action": "metadata-audit",
+            "profile": profile["name"],
+            "selectedCount": len(items),
+            "compliantCount": len(items) - len(violations),
+            "violationCount": len(violations),
+            "violations": violations,
+        }
+    )
+
+
+def validate_metadata_proposal(
+    value: Any, profile: dict[str, Any], index: int
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        exit_with(f"Metadata manifest item {index} must be an object")
+    allowed = {
+        "key",
+        "expectedVersion",
+        "status",
+        "primaryRole",
+        "secondary",
+        "topics",
+        "rating",
+    }
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        exit_with(f"Metadata manifest item {index} has unknown fields: {', '.join(unknown)}")
+    key = value.get("key")
+    if not isinstance(key, str) or not key.strip():
+        exit_with(f"Metadata manifest item {index} requires a non-empty key")
+    result = dict(value)
+    result["key"] = key.strip()
+    if "expectedVersion" not in result:
+        exit_with(f"Metadata manifest item {index} requires expectedVersion")
+    if (
+        isinstance(result["expectedVersion"], bool)
+        or not isinstance(result["expectedVersion"], int)
+        or result["expectedVersion"] < 0
+    ):
+        exit_with(f"Metadata manifest item {index} expectedVersion must be non-negative")
+
+    statuses, primary, secondary = metadata_tag_sets(profile)
+    if "status" in result and result["status"] is not None and result["status"] not in statuses:
+        exit_with(f"Metadata manifest item {index} has an unsupported status")
+    if "primaryRole" in result or "secondary" in result:
+        if result.get("primaryRole") not in primary:
+            exit_with(f"Metadata manifest item {index} requires one supported primaryRole")
+        extra = result.get("secondary", [])
+        if not isinstance(extra, list) or len(extra) != len(set(extra)) or any(tag not in secondary for tag in extra):
+            exit_with(f"Metadata manifest item {index} secondary tags must be unique supported values")
+        if 1 + len(extra) > profile["roles"]["maxPerItem"]:
+            exit_with(f"Metadata manifest item {index} has too many Role/Signal tags")
+        result["secondary"] = extra
+    if "topics" in result:
+        topics = result["topics"]
+        prefix = profile["topics"]["prefix"]
+        if (
+            not isinstance(topics, list)
+            or len(topics) != len(set(topics))
+            or not profile["topics"]["minPerItem"] <= len(topics) <= profile["topics"]["maxPerItem"]
+            or any(not isinstance(topic, str) or not topic.startswith(prefix) or topic == prefix for topic in topics)
+        ):
+            exit_with(f"Metadata manifest item {index} topics must be 1–3 unique {prefix} tags")
+    if "rating" in result and (
+        isinstance(result["rating"], bool)
+        or not isinstance(result["rating"], int)
+        or not 1 <= result["rating"] <= 5
+    ):
+        exit_with(f"Metadata manifest item {index} rating must be an integer from 1 to 5")
+    if not set(result).intersection({"status", "primaryRole", "secondary", "topics", "rating"}):
+        exit_with(f"Metadata manifest item {index} does not request a metadata change")
+    return result
+
+
+def read_metadata_manifest(
+    path: str, expect_count: int
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    profile = load_metadata_profile()
+    value = read_json_file(path)
+    if not isinstance(value, dict) or value.get("profile") != profile["name"]:
+        exit_with(f"Metadata manifest must select profile {profile['name']!r}")
+    rows = value.get("items")
+    if not isinstance(rows, list) or len(rows) != expect_count:
+        exit_with(f"Expected {expect_count} metadata manifest items")
+    proposals = [validate_metadata_proposal(row, profile, index) for index, row in enumerate(rows)]
+    keys = [row["key"] for row in proposals]
+    if len(keys) != len(set(keys)):
+        exit_with("Metadata manifest item keys must be unique")
+    return profile, proposals
+
+
+def metadata_items_by_keys(keys: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for batch in chunks(keys, MAX_BATCH):
+        rows.extend(items_by_keys(batch))
+    by_key = {str(row.get("key")): row for row in rows}
+    missing = [key for key in keys if key not in by_key]
+    if missing:
+        exit_with(f"Metadata items were not found: {', '.join(missing)}")
+    return [by_key[key] for key in keys]
+
+
+def make_metadata_patch(
+    data: dict[str, Any], proposal: dict[str, Any], profile: dict[str, Any]
+) -> dict[str, Any]:
+    original_tags = [dict(tag) for tag in data.get("tags", [])]
+    tags = list(original_tags)
+    tags_changed = False
+    statuses, primary, secondary = metadata_tag_sets(profile)
+
+    def replace_group(predicate: Any, desired: list[str]) -> None:
+        nonlocal tags, tags_changed
+        current = [str(tag.get("tag", "")) for tag in tags if predicate(str(tag.get("tag", "")))]
+        if set(current) == set(desired) and len(current) == len(desired):
+            return
+        tags = [tag for tag in tags if not predicate(str(tag.get("tag", "")))]
+        tags.extend({"tag": name} for name in desired)
+        tags_changed = True
+
+    if "status" in proposal:
+        replace_group(
+            lambda name: name.startswith(STATUS_PREFIX),
+            [] if proposal["status"] is None else [proposal["status"]],
+        )
+    if "primaryRole" in proposal or "secondary" in proposal:
+        replace_group(
+            lambda name: name in primary or name in secondary,
+            [proposal["primaryRole"], *proposal.get("secondary", [])],
+        )
+    if "topics" in proposal:
+        prefix = profile["topics"]["prefix"]
+        replace_group(lambda name: name.startswith(prefix), proposal["topics"])
+
+    patch: dict[str, Any] = {}
+    if tags_changed:
+        patch["tags"] = tags
+    if "rating" in proposal:
+        before = str(data.get("extra") or "")
+        after = update_extra_rating(before, proposal["rating"])
+        if after != before:
+            patch["extra"] = after
+    return patch
+
+
+def metadata_proposal_mismatches(
+    data: dict[str, Any], proposal: dict[str, Any], profile: dict[str, Any]
+) -> list[str]:
+    names = [str(tag.get("tag", "")) for tag in data.get("tags", [])]
+    _, primary, secondary = metadata_tag_sets(profile)
+    mismatches: list[str] = []
+    if "status" in proposal:
+        expected = set() if proposal["status"] is None else {proposal["status"]}
+        if {name for name in names if name.startswith(STATUS_PREFIX)} != expected:
+            mismatches.append("status")
+    if "primaryRole" in proposal or "secondary" in proposal:
+        expected = {proposal["primaryRole"], *proposal.get("secondary", [])}
+        if {name for name in names if name in primary or name in secondary} != expected:
+            mismatches.append("roles")
+    if "topics" in proposal:
+        prefix = profile["topics"]["prefix"]
+        if {name for name in names if name.startswith(prefix)} != set(proposal["topics"]):
+            mismatches.append("topics")
+    if "rating" in proposal:
+        rate_lines = [line for line in str(data.get("extra") or "").splitlines() if RATE_FIELD_RE.match(line)]
+        if len(rate_lines) != 1 or not (match := RATE_LINE_RE.match(rate_lines[0])) or int(match.group(1)) != proposal["rating"]:
+            mismatches.append("rating")
+    return mismatches
+
+
+def cmd_curate_metadata(args: argparse.Namespace) -> None:
+    profile, proposals = read_metadata_manifest(args.file, args.expect_count)
+    items = metadata_items_by_keys([row["key"] for row in proposals])
+    planned: list[dict[str, Any]] = []
+    changes: list[dict[str, Any]] = []
+    for data, proposal in zip(items, proposals):
+        expected = proposal["expectedVersion"]
+        if data.get("version") != expected:
+            exit_with(
+                f"Item {proposal['key']} version changed: expected {expected}, found {data.get('version')}"
+            )
+        patch = make_metadata_patch(data, proposal, profile)
+        if patch:
+            planned.append(make_simple_patch(data, patch))
+            changes.append(
+                {
+                    "key": proposal["key"],
+                    "title": data.get("title"),
+                    "fields": sorted(patch),
+                }
+            )
+
+    output = {
+        "action": "curate-metadata",
+        "profile": profile["name"],
+        "selectedCount": len(items),
+        "changedCount": len(planned),
+        "unchangedCount": len(items) - len(planned),
+        "changes": changes,
+        "committed": False,
+        "writeAttempted": False,
+    }
+    if not args.yes or not planned:
+        if args.yes and not planned:
+            output["committed"] = True
+            output["outcome"] = "unchanged"
+        dump_json(output)
+        return
+
+    responses, failed = commit_item_patches(planned)
+    output.update(
+        {
+            "committed": True,
+            "writeAttempted": True,
+            "batchCount": len(responses),
+            "failed": failed,
+        }
+    )
+    if failed:
+        output["outcome"] = "partial"
+        dump_json(output)
+        raise SystemExit(2)
+
+    verified = metadata_items_by_keys([row["key"] for row in proposals])
+    verification_failures = [
+        {"key": proposal["key"], "fields": mismatches}
+        for data, proposal in zip(verified, proposals)
+        if (mismatches := metadata_proposal_mismatches(data, proposal, profile))
+    ]
+    output.update(
+        {
+            "outcome": "changed" if not verification_failures else "verification-failed",
+            "verifiedCount": len(verified) - len(verification_failures),
+            "verificationFailures": verification_failures,
+        }
+    )
+    dump_json(output)
+    if verification_failures:
+        raise SystemExit(2)
+
+
 def cmd_create_item(args: argparse.Namespace) -> None:
     value = read_json_file(args.json_file)
     if not isinstance(value, dict):
@@ -867,7 +1210,7 @@ def normalize_status_name(name: str) -> str:
 
 
 def update_extra_rating(extra: str, value: int | None) -> str:
-    lines = [line for line in extra.splitlines() if not RATE_LINE_RE.match(line)]
+    lines = [line for line in extra.splitlines() if not RATE_FIELD_RE.match(line)]
     if value is not None:
         lines.append(f"rate: {value}")
     return "\n".join(lines).strip()
@@ -925,6 +1268,15 @@ def cmd_list_colored_tags(_: argparse.Namespace) -> None:
     dump_json(bridge_colored_tags())
 
 
+def validate_colored_tag_change(
+    existing: dict[str, dict[str, Any]], name: str, position: int
+) -> None:
+    if not 0 <= position < MAX_COLORED_TAGS:
+        exit_with(f"Colored tag position must be between 0 and {MAX_COLORED_TAGS - 1}")
+    if name not in existing and len(existing) >= MAX_COLORED_TAGS:
+        exit_with(f"Zotero allows at most {MAX_COLORED_TAGS} colored tags")
+
+
 def cmd_set_colored_tag(args: argparse.Namespace) -> None:
     name = args.name.strip()
     if not name:
@@ -932,6 +1284,7 @@ def cmd_set_colored_tag(args: argparse.Namespace) -> None:
     if not re.fullmatch(r"#[0-9A-Fa-f]{6}", args.color):
         exit_with("Tag color must use #RRGGBB syntax")
     existing = {row.get("name"): row for row in bridge_colored_tags()}
+    validate_colored_tag_change(existing, name, args.position)
     preview = {
         "action": "set-colored-tag",
         "name": name,
@@ -939,7 +1292,7 @@ def cmd_set_colored_tag(args: argparse.Namespace) -> None:
         "position": args.position,
         "before": existing.get(name),
         "coloredTagCountAfter": len(existing) + (0 if name in existing else 1),
-        "note": "Keep this set small; ordinary topical tags do not need colors.",
+        "note": "Colors are library-wide; item metadata changes do not rewrite this palette.",
         "committed": False,
     }
     if not args.yes:
@@ -984,13 +1337,15 @@ def cmd_create_status(args: argparse.Namespace) -> None:
     name = normalize_status_name(args.name)
     if not re.fullmatch(r"#[0-9A-Fa-f]{6}", args.color):
         exit_with("Status color must use #RRGGBB syntax")
-    existing = {row.get("name"): row for row in bridge_statuses()}
+    all_colored = {row.get("name"): row for row in bridge_colored_tags()}
+    validate_colored_tag_change(all_colored, name, args.position)
     preview = {
         "action": "create-or-update-status",
         "name": name,
         "color": args.color,
         "position": args.position,
-        "before": existing.get(name),
+        "before": all_colored.get(name),
+        "coloredTagCountAfter": len(all_colored) + (0 if name in all_colored else 1),
         "committed": False,
     }
     if not args.yes:
@@ -1017,16 +1372,24 @@ def cmd_set_status(args: argparse.Namespace) -> None:
     planned: list[dict[str, Any]] = []
     for data in items:
         original = [dict(tag) for tag in data.get("tags", [])]
+        current = [
+            str(tag.get("tag", ""))
+            for tag in original
+            if str(tag.get("tag", "")).startswith(STATUS_PREFIX)
+        ]
+        desired = [] if name is None else [name]
+        if set(current) == set(desired) and len(current) == len(desired):
+            continue
         tags = [tag for tag in original if not str(tag.get("tag", "")).startswith(STATUS_PREFIX)]
         if name:
             tags.append({"tag": name})
-        if tags != original:
-            planned.append(make_simple_patch(data, {"tags": tags}))
+        planned.append(make_simple_patch(data, {"tags": tags}))
     preview = {
         "action": "clear-status" if name is None else "set-status",
         "status": name,
         "selectedCount": len(items),
         "changedCount": len(planned),
+        "unchangedCount": len(items) - len(planned),
         "committed": False,
         "updates": planned,
     }
@@ -2043,6 +2406,25 @@ def build_parser() -> argparse.ArgumentParser:
     backup_collection.add_argument("--file", required=True)
     backup_collection.set_defaults(func=cmd_backup_collection)
 
+    metadata_profile = commands.add_parser(
+        "metadata-profile", help="Show the bundled Ethereal-compatible metadata profile"
+    )
+    metadata_profile.set_defaults(func=cmd_metadata_profile)
+
+    metadata_audit = commands.add_parser(
+        "metadata-audit", help="Audit selected items against the bundled metadata profile"
+    )
+    add_item_selector(metadata_audit)
+    metadata_audit.set_defaults(func=cmd_metadata_audit)
+
+    curate_metadata = commands.add_parser(
+        "curate-metadata", help="Preview or apply heterogeneous metadata from one manifest"
+    )
+    curate_metadata.add_argument("--file", required=True)
+    curate_metadata.add_argument("--expect-count", type=int, required=True)
+    curate_metadata.add_argument("--yes", action="store_true")
+    curate_metadata.set_defaults(func=cmd_curate_metadata)
+
     batch = commands.add_parser(
         "batch-update-items",
         help="Preview or batch-update item fields, type, tags, or collection membership",
@@ -2107,7 +2489,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     set_colored_tag.add_argument("--name", required=True)
     set_colored_tag.add_argument("--color", required=True)
-    set_colored_tag.add_argument("--position", type=int, default=0)
+    set_colored_tag.add_argument("--position", type=int, required=True)
     set_colored_tag.add_argument("--yes", action="store_true")
     set_colored_tag.set_defaults(func=cmd_set_colored_tag)
 
@@ -2127,7 +2509,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create_status.add_argument("--name", required=True)
     create_status.add_argument("--color", required=True)
-    create_status.add_argument("--position", type=int, default=12)
+    create_status.add_argument("--position", type=int, required=True)
     create_status.add_argument("--yes", action="store_true")
     create_status.set_defaults(func=cmd_create_status)
 

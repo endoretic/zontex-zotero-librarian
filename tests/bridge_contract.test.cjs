@@ -78,6 +78,7 @@ function loadBridge(overrides = {}) {
     "unwrapReaderValue",
     "sameAnnotationPosition",
     "tagImpact",
+    "statusEndpointClass",
     "tagRenameEndpointClass",
     "tagMergeEndpointClass",
     "exactVersionMap",
@@ -606,6 +607,71 @@ test("tag impact ignores a same-named tag that exists only in another library", 
   assert.equal(impact.tagID, 9);
   assert.equal(impact.exists, false);
   assert.equal(impact.itemIDs.length, 0);
+});
+
+test("colored tag endpoint enforces nine positions and allows native reordering", async () => {
+  const calls = [];
+  const colors = new Map([
+    ["/To Read", { color: "#6196BC", position: 0 }],
+    ["/Reading", { color: "#F2A65A", position: 1 }],
+  ]);
+  const { api } = loadBridge({
+    Zotero: {
+      Tags: {
+        getColors: () => colors,
+        setColor: async (...args) => calls.push(args),
+      },
+    },
+  });
+  const Endpoint = api.statusEndpointClass();
+
+  const reordered = await endpoint(Endpoint, {
+    name: "/To Read",
+    color: "#6196BC",
+    position: 1,
+  }, { method: "PUT" });
+  assert.equal(reordered[0], 200);
+
+  const outside = await endpoint(Endpoint, {
+    name: "/Done",
+    color: "#59A14F",
+    position: 9,
+  }, { method: "PUT" });
+  assert.equal(outside[0], 400);
+
+  const accepted = await endpoint(Endpoint, {
+    name: "/Done",
+    color: "#59A14F",
+    position: 2,
+  }, { method: "PUT" });
+  assert.equal(accepted[0], 200);
+  assert.deepEqual(calls, [
+    [1, "/To Read", "#6196BC", 1],
+    [1, "/Done", "#59A14F", 2],
+  ]);
+});
+
+test("colored tag endpoint rejects a tenth native color", async () => {
+  const colors = new Map(
+    Array.from({ length: 9 }, (_, index) => [
+      `Tag ${index}`,
+      { color: "#123456", position: index },
+    ]),
+  );
+  const { api } = loadBridge({
+    Zotero: {
+      Tags: {
+        getColors: () => colors,
+        setColor: async () => assert.fail("must not write"),
+      },
+    },
+  });
+  const result = await endpoint(api.statusEndpointClass(), {
+    name: "Tenth",
+    color: "#654321",
+    position: 0,
+  }, { method: "PUT" });
+  assert.equal(result[0], 409);
 });
 
 test("tag rename preserves an existing uncolored target", async () => {
