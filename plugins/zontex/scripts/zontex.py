@@ -655,6 +655,248 @@ def cmd_create_item(args: argparse.Namespace) -> None:
     dump_json(preview)
 
 
+def validate_create_items_manifest(value: Any, expect_count: int) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        unknown = sorted(set(value) - {"schemaVersion", "items"})
+        if unknown:
+            exit_with(f"Create-items manifest has unknown fields: {', '.join(unknown)}")
+        schema_version = value.get("schemaVersion", 1)
+        if (
+            isinstance(schema_version, bool)
+            or not isinstance(schema_version, int)
+            or schema_version != 1
+        ):
+            exit_with("Create-items manifest has an unsupported schemaVersion")
+        rows = value.get("items")
+    else:
+        rows = value
+    if not isinstance(rows, list) or not rows:
+        exit_with("Create-items manifest must contain a non-empty item list")
+    if expect_count < 1 or len(rows) != expect_count:
+        exit_with(f"Expected {expect_count} create-items entries, found {len(rows)}")
+
+    records: list[dict[str, Any]] = []
+    client_ids: set[str] = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            exit_with(f"Create-items entry {index} must be an object")
+        payload = dict(row)
+        client_id = payload.pop("clientId", f"item-{index + 1}")
+        if not isinstance(client_id, str) or not client_id.strip():
+            exit_with(f"Create-items entry {index} has an invalid clientId")
+        client_id = client_id.strip()
+        if client_id in client_ids:
+            exit_with(f"Create-items clientId must be unique: {client_id}")
+        client_ids.add(client_id)
+        if "key" in payload or "version" in payload:
+            exit_with(f"Create-items entry {client_id} must not provide key or version")
+        if not isinstance(payload.get("itemType"), str) or not payload["itemType"].strip():
+            exit_with(f"Create-items entry {client_id} requires itemType")
+        payload["itemType"] = payload["itemType"].strip()
+        for field in ("creators", "tags"):
+            if field in payload and (
+                not isinstance(payload[field], list)
+                or any(not isinstance(entry, dict) for entry in payload[field])
+            ):
+                exit_with(f"Create-items entry {client_id} field {field} must be an object list")
+        collections = payload.get("collections", [])
+        if (
+            not isinstance(collections, list)
+            or any(not isinstance(key, str) or not key.strip() for key in collections)
+        ):
+            exit_with(f"Create-items entry {client_id} collections must be unique keys")
+        collections = [key.strip() for key in collections]
+        if len(collections) != len(set(collections)):
+            exit_with(f"Create-items entry {client_id} collections must be unique keys")
+        if collections or "collections" in payload:
+            payload["collections"] = collections
+        records.append({"clientId": client_id, "payload": payload})
+    return records
+
+
+def create_result_key(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    data = value.get("data")
+    key = value.get("key") or (data.get("key") if isinstance(data, dict) else None)
+    return str(key) if key else None
+
+
+def parse_create_items_response(
+    body: Any, records: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not isinstance(body, dict):
+        return [
+            {
+                "clientId": record["clientId"],
+                "status": "failed",
+                "error": "Zotero returned an invalid batch response",
+            }
+            for record in records
+        ]
+    groups = {
+        name: value if isinstance(value, dict) else {}
+        for name, value in (
+            ("created", body.get("successful")),
+            ("unchanged", body.get("unchanged")),
+            ("failed", body.get("failed")),
+        )
+    }
+    results: list[dict[str, Any]] = []
+    for index, record in enumerate(records):
+        raw_index = str(index)
+        if raw_index in groups["failed"]:
+            results.append(
+                {
+                    "clientId": record["clientId"],
+                    "status": "failed",
+                    "error": groups["failed"][raw_index],
+                }
+            )
+            continue
+        status = next(
+            (name for name in ("created", "unchanged") if raw_index in groups[name]),
+            None,
+        )
+        value = groups[status][raw_index] if status else None
+        key = create_result_key(value)
+        if status and key:
+            results.append({"clientId": record["clientId"], "status": status, "key": key})
+        else:
+            results.append(
+                {
+                    "clientId": record["clientId"],
+                    "status": "failed",
+                    "error": "Zotero omitted the item key from its batch response",
+                }
+            )
+    return results
+
+
+def summarize_create_record(record: dict[str, Any]) -> dict[str, Any]:
+    payload = record["payload"]
+    return {
+        "clientId": record["clientId"],
+        "itemType": payload.get("itemType"),
+        "title": payload.get("title"),
+        "collections": payload.get("collections", []),
+    }
+
+
+def cmd_create_items(args: argparse.Namespace) -> None:
+    records = validate_create_items_manifest(read_json_file(args.json_file), args.expect_count)
+    verify_collection_keys(
+        key
+        for record in records
+        for key in record["payload"].get("collections", [])
+    )
+    requested_batches = (len(records) + MAX_BATCH - 1) // MAX_BATCH
+    output: dict[str, Any] = {
+        "action": "create-items",
+        "requestedCount": len(records),
+        "requestedBatchCount": requested_batches,
+        "items": [summarize_create_record(record) for record in records],
+        "committed": False,
+        "writeAttempted": False,
+    }
+    if not args.yes:
+        dump_json(output)
+        return
+
+    results: list[dict[str, Any]] = []
+    attempted = 0
+    for batch in chunks(records, MAX_BATCH):
+        response = authorized_request(
+            f"{LOCAL_USER}/items",
+            method="POST",
+            data=[record["payload"] for record in batch],
+            headers={"Zotero-Write-Token": uuid.uuid4().hex},
+        )
+        attempted += 1
+        if not response.ok:
+            detail = response.text[:TEXT_LIMIT] or response.error or "no response"
+            results.extend(
+                {
+                    "clientId": record["clientId"],
+                    "status": "failed",
+                    "error": {"httpStatus": response.status, "detail": detail},
+                }
+                for record in batch
+            )
+            break
+        batch_results = parse_create_items_response(parse_body(response), batch)
+        results.extend(batch_results)
+        if any(row["status"] == "failed" for row in batch_results):
+            break
+
+    attempted_ids = {row["clientId"] for row in results}
+    not_attempted = [
+        record["clientId"] for record in records if record["clientId"] not in attempted_ids
+    ]
+    keyed_results = [row for row in results if row.get("key")]
+    verified: list[dict[str, Any]] = []
+    verification_error: str | None = None
+    if keyed_results:
+        try:
+            verified = items_by_keys([str(row["key"]) for row in keyed_results])
+        except SystemExit as exc:
+            verification_error = str(exc)
+    verified_by_key = {str(row.get("key")): row for row in verified}
+    created = [
+        {
+            "clientId": row["clientId"],
+            "key": row["key"],
+            "title": verified_by_key.get(str(row["key"]), {}).get("title"),
+        }
+        for row in results
+        if row["status"] == "created"
+    ]
+    unchanged = [
+        {
+            "clientId": row["clientId"],
+            "key": row["key"],
+            "title": verified_by_key.get(str(row["key"]), {}).get("title"),
+        }
+        for row in results
+        if row["status"] == "unchanged"
+    ]
+    failed = [row for row in results if row["status"] == "failed"]
+    verification_missing = [
+        row["key"] for row in keyed_results if str(row["key"]) not in verified_by_key
+    ]
+    if verification_missing and not verification_error:
+        verification_error = "Created item readback was incomplete"
+
+    output = {
+        "action": "create-items",
+        "requestedCount": len(records),
+        "requestedBatchCount": requested_batches,
+        "batchCount": attempted,
+        "createdCount": len(created),
+        "unchangedCount": len(unchanged),
+        "failedCount": len(failed),
+        "notAttemptedCount": len(not_attempted),
+        "verifiedCount": len(verified),
+        "created": created,
+        "unchanged": unchanged,
+        "failed": failed,
+        "notAttempted": not_attempted,
+        "verificationError": verification_error,
+        "verificationMissingKeys": verification_missing,
+        "committed": True,
+        "writeAttempted": True,
+    }
+    if failed or not_attempted:
+        output["outcome"] = "partial" if keyed_results else "failed"
+    elif verification_error:
+        output["outcome"] = "verification-failed"
+    else:
+        output["outcome"] = "changed" if created else "unchanged"
+    dump_json(output)
+    if failed or not_attempted or verification_error:
+        raise SystemExit(2)
+
+
 def parse_assignment(raw: str, *, label: str) -> tuple[str, str]:
     if "=" not in raw:
         exit_with(f"{label} must use FIELD=VALUE syntax: {raw}")
@@ -684,23 +926,102 @@ def unique_items(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def paged_items(path: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    start = 0
+    page_size = 100
+    while True:
+        query = dict(params or {})
+        query.update({"limit": page_size, "start": start})
+        response = api_get_response(f"{path}?{urllib.parse.urlencode(query)}")
+        page = parse_body(response)
+        if not isinstance(page, list):
+            exit_with("Unexpected Zotero paged-item response")
+        rows.extend(page)
+        raw_total = header(response.headers, "Total-Results")
+        total = int(raw_total) if raw_total and raw_total.isdigit() else None
+        if not page:
+            if total is not None and len(rows) < total:
+                exit_with("Zotero returned an incomplete paged-item response")
+            return rows
+        if total is not None and len(rows) >= total:
+            return rows
+        if len(page) < page_size:
+            return rows
+        start += len(page)
+
+
 def select_items(args: argparse.Namespace) -> list[dict[str, Any]]:
     if args.item_key:
-        rows = [api_get(f"{LOCAL_USER}/items/{urllib.parse.quote(key)}") for key in args.item_key]
+        rows = items_by_keys(args.item_key)
     elif args.collection_key or args.collection_name:
         collection = resolve_collection(key=args.collection_key, name=args.collection_name)
         key = urllib.parse.quote(str(collection.get("key")))
-        rows = api_get(f"{LOCAL_USER}/collections/{key}/items/top")
+        rows = paged_items(f"{LOCAL_USER}/collections/{key}/items/top")
     elif args.query:
-        rows = api_get(f"{LOCAL_USER}/items/top?{urllib.parse.urlencode({'q': args.query})}")
+        rows = paged_items(f"{LOCAL_USER}/items/top", {"q": args.query})
     elif args.all_items:
-        rows = api_get(f"{LOCAL_USER}/items/top")
+        rows = paged_items(f"{LOCAL_USER}/items/top")
     else:
         exit_with("Select items by key, collection, query, or --all")
     items = unique_items(rows)
     if args.expect_count is not None and len(items) != args.expect_count:
         exit_with(f"Expected {args.expect_count} selected items, found {len(items)}; no changes made")
     return items
+
+
+def extra_identifier(extra: Any, name: str) -> str | None:
+    pattern = re.compile(rf"^\s*{re.escape(name)}\s*:\s*(.+?)\s*$", re.IGNORECASE)
+    for line in str(extra or "").splitlines():
+        if match := pattern.match(line):
+            return match.group(1)
+    return None
+
+
+def first_author(data: dict[str, Any]) -> str | None:
+    creators = [row for row in data.get("creators", []) if isinstance(row, dict)]
+    authors = [row for row in creators if row.get("creatorType") == "author"] or creators
+    if not authors:
+        return None
+    author = authors[0]
+    return str(author.get("lastName") or author.get("name") or "").strip() or None
+
+
+def item_year(data: dict[str, Any]) -> str | None:
+    match = re.search(
+        r"(?<!\d)(1[5-9]\d{2}|20\d{2}|21\d{2})(?!\d)",
+        str(data.get("date") or ""),
+    )
+    return match.group(1) if match else None
+
+
+def compact_inventory_item(data: dict[str, Any]) -> dict[str, Any]:
+    identifiers = {
+        name: value
+        for name in ("DOI", "PMID", "ISBN")
+        if (value := data.get(name) or extra_identifier(data.get("extra"), name))
+    }
+    return {
+        "key": data.get("key"),
+        "version": data.get("version"),
+        "itemType": data.get("itemType"),
+        "title": data.get("title"),
+        "firstAuthor": first_author(data),
+        "year": item_year(data),
+        "identifiers": identifiers,
+        "collections": data.get("collections", []),
+    }
+
+
+def cmd_inventory(args: argparse.Namespace) -> None:
+    items = select_items(args)
+    dump_json(
+        {
+            "action": "inventory",
+            "itemCount": len(items),
+            "items": [compact_inventory_item(data) for data in items],
+        }
+    )
 
 
 def replace_tags(tags: list[dict[str, Any]], replacements: list[tuple[str, str]]) -> list[dict[str, Any]]:
@@ -1813,15 +2134,23 @@ def item_children(item_key: str) -> list[dict[str, Any]]:
 
 
 def items_by_keys(item_keys: list[str]) -> list[dict[str, Any]]:
-    if not 1 <= len(item_keys) <= MAX_BATCH:
-        exit_with(f"Readback requires 1–{MAX_BATCH} item keys")
-    query = urllib.parse.urlencode(
-        {"itemKey": ",".join(item_keys), "limit": len(item_keys)}
-    )
-    value = api_get(f"{LOCAL_USER}/items?{query}")
-    if not isinstance(value, list):
-        exit_with("Unexpected Zotero multi-item readback shape")
-    return [data_of(row) for row in value]
+    if not item_keys:
+        exit_with("Readback requires at least one item key")
+    requested = list(dict.fromkeys(item_keys))
+    rows: list[dict[str, Any]] = []
+    for batch in chunks(requested, MAX_BATCH):
+        query = urllib.parse.urlencode(
+            {"itemKey": ",".join(batch), "limit": len(batch)}
+        )
+        value = api_get(f"{LOCAL_USER}/items?{query}")
+        if not isinstance(value, list):
+            exit_with("Unexpected Zotero multi-item readback shape")
+        rows.extend(data_of(row) for row in value)
+    by_key = {str(row.get("key")): row for row in rows if row.get("key")}
+    missing = [key for key in requested if key not in by_key]
+    if missing:
+        exit_with(f"Zotero items were not found: {', '.join(missing)}")
+    return [by_key[key] for key in requested]
 
 
 def merge_child_counts(item_key: str) -> dict[str, int]:
@@ -2035,6 +2364,20 @@ def build_parser() -> argparse.ArgumentParser:
     create_item.add_argument("--json-file", required=True)
     create_item.add_argument("--yes", action="store_true")
     create_item.set_defaults(func=cmd_create_item)
+
+    create_items = commands.add_parser(
+        "create-items", help="Preview or create many Zotero items from one manifest"
+    )
+    create_items.add_argument("--json-file", required=True)
+    create_items.add_argument("--expect-count", type=int, required=True)
+    create_items.add_argument("--yes", action="store_true")
+    create_items.set_defaults(func=cmd_create_items)
+
+    inventory = commands.add_parser(
+        "inventory", help="Read compact matching fields for selected top-level items"
+    )
+    add_item_selector(inventory)
+    inventory.set_defaults(func=cmd_inventory)
 
     backup_collection = commands.add_parser(
         "backup-collection", help="Export a collection subtree and item metadata to JSON"
