@@ -71,6 +71,14 @@ Use the single command or a per-step audit when there are only one or two target
 - The updater intentionally refuses to replace a Git checkout. Explain that the user must resolve local changes and use `git pull --ff-only`; never overwrite a checkout or delete its backup.
 - The Bridge itself uses Zotero's native add-on updater when its XPI contains a release `update_url`. It requires the update manifest and XPI to be anonymously reachable over HTTPS; do not claim that a private GitHub Release will update automatically.
 
+## Fast item workflow
+
+- For three or more literature candidates, read the relevant Zotero scope once with `inventory`. It follows pagination and returns only matching fields. Build a temporary in-memory lookup; do not repeat one search or GET per candidate and do not create a persistent cache.
+- Use any reliable DOI, PMID, ISBN, or other identifier already present for exact local matching without mandatory cross-validation. Only candidates without identifiers fall back to normalized title, first author, and year.
+- After deduplication and one consolidated confirmation, put every genuinely missing item in one `create-items` manifest with a unique `clientId`. Use `--expect-count N --yes`; the CLI splits batches at 50 and performs one consolidated readback.
+- If `create-items` reports a failed or not-attempted record, stop. Report its `clientId` and preserve every successful result. Never replay the full manifest or automatically delete created items; corrected remaining records form a newly confirmed batch.
+- Prefer one explicit-key bulk selection for later updates. The CLI chunks keys internally and preserves requested order, so do not loop over per-item commands.
+
 ## Literature-list curation protocol
 
 Use this sequence when the user wants a collection built from a literature list. The completed collection should follow the default Zontex metadata structure while adapting the topical vocabulary to the user's research theme.
@@ -92,6 +100,8 @@ Use this sequence when the user wants a collection built from a literature list.
 ```powershell
 python scripts/zontex.py status --require-write
 python scripts/zontex.py authorize-write
+python scripts/zontex.py inventory --all
+python scripts/zontex.py create-items --json-file .\items.json --expect-count 35 --yes
 python scripts/zontex.py collections
 python scripts/zontex.py backup-collection --collection-name "SDT Review" --file .\sdt-review-backup.json
 python scripts/zontex.py rename-collection --current-name "SDT Review" --name "SDT Methods Review" --yes
